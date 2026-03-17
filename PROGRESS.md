@@ -27,12 +27,13 @@
 - **驗收**：`init_deal()` 後每位玩家恰有 16 張非花牌
 - Commit `eedad67`：feat(mahjong-py): 實作發牌、補花與見牌初始化邏輯
 
-### 4. [/] 實作胡牌判定演算法
+### 4. [v] 實作胡牌判定演算法
 - **檔案範圍**：`mahjong.py`
 - **摘要**：對應 `is_win()`、`is_suit()`（Theorem 1）、`find_pair()`、`find_suit_pair()`（Theorem 2）、`find_honor_pair()`，加上 docstring 解釋演算法來源
 - **驗收**：已知胡牌手牌輸入 `is_win()` 回傳 `True`，未胡回傳 `False`
+- Commit `220733d`：feat(mahjong-py): 實作胡牌判定演算法（Theorem 1 & 2）
 
-### 5. [ ] 實作 AI 出牌策略
+### 5. [/] 實作 AI 出牌策略
 - **檔案範圍**：`mahjong.py`
 - **摘要**：`calculate_gates()` 計算聽牌候選，`decide_play()` 三階段策略（聽牌優先 > 出現多優先 > 隨機）
 - **驗收**：對固定手牌呼叫 `decide_play()` 不拋出例外

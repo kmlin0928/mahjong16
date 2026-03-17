@@ -380,6 +380,105 @@ def is_win(hand: list[int], extra: int) -> bool:
 
 
 # ---------------------------------------------------------------------------
+# AI 出牌策略
+# ---------------------------------------------------------------------------
+
+import random as _random
+
+
+def calculate_gates(m: Mahjong, p: PlayerState, ai: AIContext) -> None:
+    """計算每張手牌打出後的聽牌候選，結果寫入 ai.gates 與 ai.play_freq。
+
+    演算法：
+    1. 統計手牌（含摸入牌，共 n_hand+1 張）的牌面累積分佈，
+       找出哪些牌面在目前手牌中有出現（候選聽牌牌面）。
+    2. 對每張手牌逐一假設「打出這張」，再假設「摸入各候選牌」，
+       呼叫 is_win() 檢查是否胡牌；胡牌則 ai.gates[打出牌]++。
+    3. ai.play_freq[i] = 4 - seen[hand[i]//COPIES]（已見張數越多，可摸機會越少）。
+
+    Args:
+        m:  遊戲狀態（用於取得 seen 上限）
+        p:  玩家狀態（hand 長度為 n_hand+1，最後一張為剛摸入的牌）
+        ai: AI 決策資料，本函式直接覆寫 gates 與 play_freq
+    """
+    ai.gates = {}
+    ai.play_freq = {}
+
+    total = p.n_hand + 1        # 含摸入牌
+    hand = p.hand               # 長度 total
+
+    # 統計手牌各牌面種類的出現次數（數牌 + 字牌，忽略花牌）
+    hist = [0] * (SUITED_KINDS + HONOR_KINDS)
+    for tile in hand[:total]:
+        kind = tile // COPIES
+        if kind < len(hist):
+            hist[kind] += 1
+
+    # 依數牌花色計算累積，找出哪些牌面「有出現」作為候選聽牌
+    # 原版邏輯：每個花色各自做前綴累加，讓任何非零位置都 > 0
+    for suit in range(SUIT_COUNT):
+        base = suit * TILES_PER_SUIT
+        for i in range(1, TILES_PER_SUIT):
+            hist[base + i] += hist[base + i - 1]
+        for i in range(TILES_PER_SUIT - 1):
+            hist[base + i] = hist[base + TILES_PER_SUIT - 1]
+
+    # 候選聽牌：牌面有出現且該牌面尚有未見副本
+    candidates: list[int] = []
+    for kind, count in enumerate(hist):
+        if count > 0 and p.seen[kind] < COPIES:
+            candidates.append(kind * COPIES)
+
+    # 逐一模擬打出每張手牌
+    for i in range(total):
+        tile_out = hand[i]
+        kind_out = tile_out // COPIES
+        ai.play_freq[i] = COPIES - p.seen[kind_out] if kind_out < len(p.seen) else 0
+
+        # 假設打出第 i 張，剩餘手牌 = hand 去掉第 i 張（共 n_hand 張）
+        remaining = hand[:i] + hand[i + 1:total]
+
+        gate_count = 0
+        for cand_tile in candidates:
+            if is_win(remaining, cand_tile):
+                gate_count += 1
+
+        if gate_count > 0:
+            ai.gates[i] = gate_count
+
+
+def decide_play(p: PlayerState, ai: AIContext) -> int:
+    """三階段 AI 出牌策略，回傳要打出的手牌索引。
+
+    優先順序：
+    1. 打出後聽牌數最多的牌（ai.gates 中 value 最大）
+    2. 若無聽牌，打出「已見張數最多」的牌（ai.play_freq 中 value 最小）
+    3. 隨機選一張（保底）
+
+    Args:
+        p:  玩家狀態
+        ai: AI 決策資料（已由 calculate_gates 填入）
+
+    Returns:
+        要打出的手牌索引（0 ~ n_hand）
+    """
+    total = p.n_hand + 1
+
+    # 階段一：聽牌數最多
+    if ai.gates:
+        best_idx = max(ai.gates, key=lambda k: ai.gates[k])
+        return best_idx
+
+    # 階段二：已見張數最多（play_freq 值最小 = 最難再摸到 = 最適合打出）
+    if ai.play_freq:
+        best_idx = min(ai.play_freq, key=lambda k: ai.play_freq[k])
+        return best_idx
+
+    # 階段三：隨機
+    return _random.randint(0, total - 1)
+
+
+# ---------------------------------------------------------------------------
 # 快速驗收（執行此模組時顯示）
 # ---------------------------------------------------------------------------
 
@@ -464,3 +563,17 @@ if __name__ == "__main__":
     no_win_hand = list(range(0, 36, 4)) + list(range(36, 68, 4))  # 9+8=17 張
     assert not is_win(no_win_hand[:16], no_win_hand[16]), "未胡手牌應回傳 False"
     print("  ✓ 未胡手牌回傳 False")
+
+    print("\n--- AI 出牌策略驗收 ---")
+    # 建立一手快要聽牌的手牌：1-3筒×5組（15張）+ 東東 + 摸入南
+    # 打出東（index 15）後聽南可胡
+    ai_hand = [0, 4, 8] * 5 + [108, 112]   # 長度 17（含摸入）
+    p_ai = PlayerState(n_hand=16)
+    p_ai.hand = ai_hand[:]
+    p_ai.seen = [0] * (SUITED_KINDS + HONOR_KINDS)
+    ai_ctx = AIContext()
+    m_ai = Mahjong(n_hand=16)
+    calculate_gates(m_ai, p_ai, ai_ctx)
+    idx = decide_play(p_ai, ai_ctx)
+    assert 0 <= idx <= 16, f"decide_play 回傳索引應在 0–16，實際 {idx}"
+    print(f"  ✓ decide_play() 回傳索引 {idx}（打出 {n_to_chinese(ai_hand[idx])}），無例外")

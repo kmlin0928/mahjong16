@@ -134,6 +134,63 @@ class Mahjong:
         if not self.ai:
             self.ai = [AIContext() for _ in range(4)]
 
+    def deal_one(self) -> int:
+        """從牌堆取出最上方一張牌並回傳。
+
+        Returns:
+            牌號整數；若牌堆已空則回傳 -1
+        """
+        if not self.remain:
+            return -1
+        tile = self.remain[0]
+        self.remain = self.remain[1:]
+        return tile
+
+    def _draw_bonus(self, p: PlayerState, idx: int) -> None:
+        """若 hand[idx] 為花牌，持續補牌直到摸到非花牌。
+
+        補到的花牌移至 p.table；若牌堆已空則停止。
+
+        Args:
+            p:   玩家狀態
+            idx: 手牌中需要檢查的位置索引
+        """
+        while p.hand[idx] >= BONUS_START:
+            p.table.append(p.hand[idx])
+            next_tile = self.deal_one()
+            if next_tile < 0:
+                return
+            print(f"補 {n_to_chinese(next_tile)}", end="")
+            p.hand[idx] = next_tile
+
+    def init_deal(self) -> None:
+        """洗牌並輪流發 n_hand 張牌給四位玩家。
+
+        使用 random.sample 產生隨機排列的完整牌堆，
+        再以輪流方式（玩家 0→1→2→3→0→…）逐張發牌。
+        """
+        import random
+        self.remain = random.sample(range(TOTAL_TILES), TOTAL_TILES)
+        for i in range(self.n_hand):
+            for j in range(4):
+                p = self.players[j]
+                p.hand.append(self.deal_one())
+
+    def show_bonus(self) -> None:
+        """初始發牌後，對四位玩家補花並初始化見牌統計。
+
+        補花結束後呼叫 p.add_seen() 將初始手牌計入見牌紀錄，
+        代表這些牌不會再從牌堆摸到。
+        """
+        for player_idx in range(4):
+            p = self.players[player_idx]
+            print(f"\n{player_idx}", end="")
+            for i in range(p.n_hand):
+                print(f" {n_to_chinese(p.hand[i])}", end="")
+                self._draw_bonus(p, i)
+            for tile in p.hand:
+                p.add_seen(tile)
+
 
 # ---------------------------------------------------------------------------
 # 快速驗收（執行此模組時顯示）
@@ -181,3 +238,24 @@ if __name__ == "__main__":
     print("  ✓ AIContext 初始化正確")
     print("  ✓ Mahjong.__post_init__ 正確建立四位玩家")
     print("  ✓ add_seen() 運作正常")
+
+    print("\n--- 發牌與花牌補牌驗收 ---")
+    import random
+    random.seed(42)
+    m2 = Mahjong(n_hand=16)
+    m2.init_deal()
+    for i, p in enumerate(m2.players):
+        assert len(p.hand) == 16, f"玩家 {i} 手牌數應為 16，實際 {len(p.hand)}"
+    print("  ✓ init_deal() 後每位玩家恰有 16 張牌")
+
+    m2.show_bonus()
+    print()
+    for i, p in enumerate(m2.players):
+        for tile in p.hand:
+            assert tile < BONUS_START, f"玩家 {i} 手牌 {tile} 不應為花牌"
+    print("  ✓ show_bonus() 後手牌中無花牌")
+
+    for i, p in enumerate(m2.players):
+        total_seen = sum(p.seen)
+        assert total_seen == 16, f"玩家 {i} seen 合計應為 16，實際 {total_seen}"
+    print("  ✓ show_bonus() 後 seen 正確初始化（合計 16）")

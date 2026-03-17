@@ -15,12 +15,13 @@
 - **驗收**：可呼叫 `n_to_chinese(0)` 回傳 `"1筒"`，`n_to_chinese(136)` 回傳 `"春"`
 - Commit `4f77eca`：feat(mahjong-py): 新增 Python 重構任務規劃與牌面常數模組
 
-### 2. [/] 重構資料結構（Player / Mahjong 類別拆分）
+### 2. [v] 重構資料結構（Player / Mahjong 類別拆分）
 - **檔案範圍**：`mahjong.py`
 - **摘要**：原版 `Player` 混合遊戲狀態與 AI 資料，拆成 `PlayerState`（手牌/花牌/見牌統計）與 `AIContext`（聽牌/出牌機率），`Mahjong` 僅保留遊戲狀態
 - **驗收**：兩個類別可各自初始化且欄位名稱語意明確
+- Commit `f2e67c4`：refactor(mahjong-py): 拆分 Player 為 PlayerState 與 AIContext 資料類別
 
-### 3. [ ] 實作發牌與花牌補牌邏輯
+### 3. [/] 實作發牌與花牌補牌邏輯
 - **檔案範圍**：`mahjong.py`
 - **摘要**：`deal_one()`、`init_deal()`、`show_bonus()`、`_draw_bonus()` 對應原版邏輯，含隨機洗牌
 - **驗收**：`init_deal()` 後每位玩家恰有 16 張非花牌

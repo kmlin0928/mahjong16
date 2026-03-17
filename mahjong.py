@@ -577,3 +577,75 @@ if __name__ == "__main__":
     idx = decide_play(p_ai, ai_ctx)
     assert 0 <= idx <= 16, f"decide_play 回傳索引應在 0–16，實際 {idx}"
     print(f"  ✓ decide_play() 回傳索引 {idx}（打出 {n_to_chinese(ai_hand[idx])}），無例外")
+
+
+def main() -> None:
+    """四人 AI 麻將主遊戲迴圈。
+
+    流程：
+    1. 初始化並發牌、補花
+    2. 四人輪流：摸牌 → 補花 → 判胡 → AI 計算 → 打牌 → 通知其他家記牌
+    3. 胡牌或牌堆耗盡則結束
+    """
+    m = Mahjong(n_hand=16)
+    m.init_deal()
+    m.show_bonus()
+    print()
+
+    player = 0
+    while m.remain:
+        p = m.players[player]
+        ai = m.ai[player]
+
+        # 摸牌
+        drawn = m.deal_one()
+        print(f"\n{player}摸 {n_to_chinese(drawn)}", end="")
+        p.hand.append(drawn)
+        m._draw_bonus(p, len(p.hand) - 1)
+        drawn = p.hand[-1]      # 補花後的實際摸入牌
+        p.add_seen(drawn)
+
+        # 判胡（摸牌後立即判斷）
+        if is_win(p.hand[:-1], drawn):
+            print(f"\n{player}胡", end="")
+            for t in p.hand[:-1]:
+                print(f" {n_to_chinese(t)}", end="")
+            print()
+            return
+
+        # 牌堆若已空（補花後耗盡），宣告和局
+        if not m.remain:
+            break
+
+        # AI 計算聽牌與出牌
+        calculate_gates(m, p, ai)
+        print(f" 打後聽牌:", end="")
+        for gate_idx, chance in ai.gates.items():
+            print(f" {n_to_chinese(p.hand[gate_idx])}={chance}", end="")
+
+        # 決定出牌
+        discard_idx = decide_play(p, ai)
+        # 將摸入牌換入打出位置（維持 hand 長度 = n_hand）
+        discard_tile = p.hand[discard_idx]
+        p.hand[discard_idx] = p.hand[-1]
+        p.hand.pop()
+
+        print(f"\n{player}打 {n_to_chinese(discard_tile)}_", end="")
+        for t in p.hand:
+            print(f" {n_to_chinese(t)}", end="")
+        if p.table:
+            for t in p.table:
+                print(f"|{n_to_chinese(t)}", end="")
+
+        # 棄牌入海，其他三家記牌
+        m.sea.append(discard_tile)
+        for other in range(1, 4):
+            m.players[(player + other) % 4].add_seen(discard_tile)
+
+        player = (player + 1) % 4
+
+    print("\n和局")
+
+
+if __name__ == "__main__":
+    main()

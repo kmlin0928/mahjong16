@@ -33,12 +33,13 @@
 - **驗收**：已知胡牌手牌輸入 `is_win()` 回傳 `True`，未胡回傳 `False`
 - Commit `220733d`：feat(mahjong-py): 實作胡牌判定演算法（Theorem 1 & 2）
 
-### 5. [/] 實作 AI 出牌策略
+### 5. [v] 實作 AI 出牌策略
 - **檔案範圍**：`mahjong.py`
 - **摘要**：`calculate_gates()` 計算聽牌候選，`decide_play()` 三階段策略（聽牌優先 > 出現多優先 > 隨機）
 - **驗收**：對固定手牌呼叫 `decide_play()` 不拋出例外
+- Commit `db964f2`：feat(mahjong-py): 實作 AI 出牌策略（calculate_gates / decide_play）
 
-### 6. [ ] 實作主遊戲迴圈
+### 6. [/] 實作主遊戲迴圈
 - **檔案範圍**：`mahjong.py`
 - **摘要**：`main()` 實作四人輪流摸牌、打牌、胡牌判定、和局判定，輸出中文對局紀錄
 - **驗收**：`uv run mahjong.py` 可完整執行一局對局並顯示結果

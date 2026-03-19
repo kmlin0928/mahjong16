@@ -76,7 +76,7 @@ class DangerLevel(IntEnum):
 
     等級定義：
 
-    EXTREMELY_SAFE (0) — 極度安全
+    EXTREMELY_SAFE (0) — 極度安全（麻將術語：絕張）
         - 數牌或字牌，全局棄牌中同牌面已出現 4 次（四張全出，不可能放槍）
         - 曾被吃（chi_tiles）、碰（pon_tiles）或槓（kong_tiles）的牌面
 

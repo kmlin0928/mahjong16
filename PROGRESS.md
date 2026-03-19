@@ -1,6 +1,6 @@
 # PROGRESS.md
 
-任務：新增「極度安全」危險等級（第四張已棄出或已被吃/碰/槓的牌）
+任務：EXTREMELY_SAFE 在程式註解和 README.md 中註明為「絕張」
 目標檔案：mahjong.py、README.md
 
 狀態說明：[ ] 未開始 | [/] 進行中 | [v] 完成
@@ -9,20 +9,15 @@
 
 ## 任務清單
 
-### 1. [/] 新增 EXTREMELY_SAFE 等級並更新分類邏輯與文件
+### 1. [/] 在 DangerLevel docstring 與 README 表格加上「絕張」術語
 
-- **檔案範圍**：`mahjong.py`（`DangerLevel` 列舉、`classify_danger()`、驗收測試）、`README.md`
+- **檔案範圍**：`mahjong.py`（`DangerLevel` docstring）、`README.md`（危險等級表格）
 - **摘要**：
-  - `DangerLevel` 新增 `EXTREMELY_SAFE = 0`（比 VERY_SAFE 更安全）
-  - 判定條件：數牌或字牌的全局棄牌次數 == 4（四張全出），或出現在 `chi_tiles`/`pon_tiles`/`kong_tiles`
-  - 花牌不在此條件（花牌只有 1 張，無法「四張全棄」）
-  - `classify_danger()` 在最開頭加入此判斷（優先於花牌判斷）
-  - 在 `__main__` 驗收區塊補上 EXTREMELY_SAFE 的測試
-  - README 危險等級表格新增第 0 級
+  - `mahjong.py` 的 `EXTREMELY_SAFE` 說明行補上「（麻將術語：絕張）」
+  - `README.md` 危險等級表格的第 0 級名稱欄改為「極度安全（絕張）」
 - **驗收**：
-  - 某牌面在全局棄牌出現 4 次 → 回傳 `EXTREMELY_SAFE`
-  - 花牌最多只能 `VERY_SAFE`（無法達到 EXTREMELY_SAFE）
-  - 新等級可正確比較：`EXTREMELY_SAFE < VERY_SAFE < SAFE`
+  - `uv run mahjong.py` 執行無誤
+  - README 表格第 0 列顯示「極度安全（絕張）」
 
 ---
 

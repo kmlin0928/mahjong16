@@ -787,6 +787,32 @@ def can_chi(hand: list[int], tile: int) -> tuple[int, int] | None:
     return None
 
 
+def can_pon(hand: list[int], tile: int) -> tuple[int, int] | None:
+    """判斷手牌是否可碰棄牌（組成刻子）。
+
+    數牌與字牌均可碰；花牌（tile >= BONUS_START）不可碰。
+
+    Args:
+        hand: 手牌列表（牌號整數）
+        tile: 欲碰的棄牌牌號
+
+    Returns:
+        手牌中可與 tile 合成刻子的 (tile_a, tile_b)；無法碰則回傳 None
+    """
+    if tile >= BONUS_START:
+        return None  # 花牌不可碰
+
+    kind = tile // COPIES
+    matched: list[int] = []
+    for t in hand:
+        if t // COPIES == kind:
+            matched.append(t)
+        if len(matched) == 2:
+            return matched[0], matched[1]
+
+    return None
+
+
 # ---------------------------------------------------------------------------
 # AI 放槍預防輔助函式
 # ---------------------------------------------------------------------------

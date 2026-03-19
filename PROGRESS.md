@@ -20,7 +20,7 @@
 - **驗收**：數牌可槓/字牌可槓/只有 2 張不可槓/花牌不可槓
 - `44d3313` feat(mahjong-py): 新增 can_kong 偵測手牌可明槓棄牌的槓子配對
 
-### 2. [/] 新增 `kong_count` 至 `PlayerState`，更新 `is_win_ext`
+### 2. [v] 新增 `kong_count` 至 `PlayerState`，更新 `is_win_ext`
 
 - **檔案範圍**：`mahjong.py`（`PlayerState` dataclass；`is_win_ext`）
 - **摘要**：
@@ -28,8 +28,9 @@
   - `is_win_ext` 呼叫改為 `chi_count + pon_count + kong_count`（在主迴圈呼叫端修改）
   - 新增模組層級常數 `AI_AUTO_KONG: bool = False`，控制 AI 是否自動明槓
 - **驗收**：`PlayerState` 建立後 `kong_count == 0`；`AI_AUTO_KONG` 預設 `False`
+- `ea649d6` feat(mahjong-py): 新增 kong_count 欄位與 AI_AUTO_KONG 常數
 
-### 3. [ ] 更新主迴圈 — 棄牌後明槓優先於碰，槓後正常摸牌
+### 3. [/] 更新主迴圈 — 棄牌後明槓優先於碰，槓後正常摸牌
 
 - **檔案範圍**：`mahjong.py`（`main()` 函式，現有碰牌判斷邏輯之前）
 - **摘要**：

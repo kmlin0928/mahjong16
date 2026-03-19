@@ -1389,7 +1389,7 @@ def main() -> None:
             p.add_seen(drawn)
 
             # 判胡（摸牌後立即判斷，含桌面已成面子；吃與碰均計入 meld_count）
-            if is_win_ext(p.hand[:-1], drawn, p.chi_count + p.pon_count):
+            if is_win_ext(p.hand[:-1], drawn, p.chi_count + p.pon_count + p.kong_count):
                 print(f"\n{player}胡", end="")
                 for t in p.hand[:-1]:
                     print(f" {n_to_chinese(t)}", end="")
@@ -1431,30 +1431,56 @@ def main() -> None:
         for other in range(1, 4):
             m.players[(player + other) % 4].add_seen(discard_tile)
 
-        # 檢查其他三家是否自動碰牌（優先於吃牌，數牌與字牌均可）
-        pon_player: int | None = None
-        for offset in range(1, 4):
-            cand_idx = (player + offset) % 4
-            cand_p = m.players[cand_idx]
-            pon_pair = can_pon(cand_p.hand, discard_tile)
-            if pon_pair is not None:
-                ta, tb = pon_pair
-                cand_p.hand.remove(ta)
-                cand_p.hand.remove(tb)
-                cand_p.table.extend([ta, tb, discard_tile])
-                cand_p.pon_count += 1
-                p.discards.pop()    # 棄牌被碰走，移出海底
-                print(
-                    f"\n  {cand_idx}碰 {n_to_chinese(discard_tile)}"
-                    f"（{n_to_chinese(ta)} {n_to_chinese(tb)}）",
-                    end="",
-                )
-                skip_draw = True
-                player = cand_idx
-                pon_player = cand_idx
-                break
+        # 檢查其他三家是否自動明槓（優先於碰，AI_AUTO_KONG 控制）
+        kong_player: int | None = None
+        if AI_AUTO_KONG:
+            for offset in range(1, 4):
+                cand_idx = (player + offset) % 4
+                cand_p = m.players[cand_idx]
+                kong_triple = can_kong(cand_p.hand, discard_tile)
+                if kong_triple is not None:
+                    ta, tb, tc = kong_triple
+                    cand_p.hand.remove(ta)
+                    cand_p.hand.remove(tb)
+                    cand_p.hand.remove(tc)
+                    cand_p.table.extend([ta, tb, tc, discard_tile])
+                    cand_p.kong_count += 1
+                    p.discards.pop()    # 棄牌被槓走，移出海底
+                    print(
+                        f"\n  {cand_idx}槓 {n_to_chinese(discard_tile)}"
+                        f"（{n_to_chinese(ta)} {n_to_chinese(tb)} {n_to_chinese(tc)}）",
+                        end="",
+                    )
+                    # 槓後正常摸牌（不設 skip_draw），玩家順序改為槓牌家
+                    player = cand_idx
+                    kong_player = cand_idx
+                    break
 
-        if pon_player is None:
+        # 無人明槓時，再檢查其他三家是否自動碰牌（優先於吃牌）
+        pon_player: int | None = None
+        if kong_player is None:
+            for offset in range(1, 4):
+                cand_idx = (player + offset) % 4
+                cand_p = m.players[cand_idx]
+                pon_pair = can_pon(cand_p.hand, discard_tile)
+                if pon_pair is not None:
+                    ta, tb = pon_pair
+                    cand_p.hand.remove(ta)
+                    cand_p.hand.remove(tb)
+                    cand_p.table.extend([ta, tb, discard_tile])
+                    cand_p.pon_count += 1
+                    p.discards.pop()    # 棄牌被碰走，移出海底
+                    print(
+                        f"\n  {cand_idx}碰 {n_to_chinese(discard_tile)}"
+                        f"（{n_to_chinese(ta)} {n_to_chinese(tb)}）",
+                        end="",
+                    )
+                    skip_draw = True
+                    player = cand_idx
+                    pon_player = cand_idx
+                    break
+
+        if kong_player is None and pon_player is None:
             # 無人碰牌，再檢查下一家是否自動吃牌（僅限數牌）
             next_idx = (player + 1) % 4
             np = m.players[next_idx]

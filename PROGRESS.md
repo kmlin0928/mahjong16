@@ -44,15 +44,16 @@
 - **驗收**：`AI_AUTO_KONG = True` 時遊戲出現「槓」標注，槓後玩家手牌數正確（移除 3 張）且正常摸牌
 - `d9bcbb3` feat(mahjong-py): 主迴圈加入明槓機制（AI_AUTO_KONG 控制）
 
-### 4. [/] README 更新明槓機制說明
+### 4. [v] README 更新明槓機制說明
 
 - **檔案範圍**：`README.md`
 - **摘要**：
   - 碰牌機制說明後補充明槓段落（`can_kong` 介紹、優先順序 槓>碰>吃、槓後正常摸牌）
   - 說明 `AI_AUTO_KONG` 常數及預設值；未來擴充 `kong_ai` 決策函式
 - **驗收**：README 清楚描述明槓流程與 AI 控制方式
+- `8f03878` docs: README 新增明槓機制說明（can_kong、AI_AUTO_KONG、優先順序）
 
-### 5. [ ] `__main__` 驗收測試：`can_kong`
+### 5. [/] `__main__` 驗收測試：`can_kong`
 
 - **檔案範圍**：`mahjong.py`（`__main__` 測試區塊，`can_pon` 測試正下方）
 - **摘要**：

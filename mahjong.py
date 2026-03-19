@@ -1337,6 +1337,27 @@ if __name__ == "__main__":
     assert _p4 is None, f"花牌不可碰應回傳 None，實際 {_p4}"
     print(f"  ✓ 花牌 {n_to_chinese(136)} 不可碰 → None")
 
+    print("\n--- can_kong 驗收 ---")
+    # 1. 數牌可槓：手牌 1筒(0,1,2)，棄牌 1筒(3)，同 kind=0
+    _k1 = can_kong([0, 1, 2], 3)
+    assert _k1 == (0, 1, 2), f"數牌可槓應回傳 (0, 1, 2)，實際 {_k1}"
+    print(f"  ✓ 數牌槓 {n_to_chinese(3)}：手牌 3張 {n_to_chinese(0)} → {_k1}")
+
+    # 2. 字牌可槓：手牌 東(108,109,110)，棄牌 東(111)，同 kind=27
+    _k2 = can_kong([108, 109, 110], 111)
+    assert _k2 == (108, 109, 110), f"字牌可槓應回傳 (108, 109, 110)，實際 {_k2}"
+    print(f"  ✓ 字牌槓 {n_to_chinese(111)}：手牌 3張 {n_to_chinese(108)} → {_k2}")
+
+    # 3. 只有 2 張：手牌 1筒(0,1)，棄牌 1筒(2) → 無法槓
+    _k3 = can_kong([0, 1], 2)
+    assert _k3 is None, f"只有 2 張應回傳 None，實際 {_k3}"
+    print(f"  ✓ 只有 2 張 → None")
+
+    # 4. 花牌不可槓：棄牌 春(136) >= BONUS_START → 直接回傳 None
+    _k4 = can_kong([136, 137, 138], 136)
+    assert _k4 is None, f"花牌不可槓應回傳 None，實際 {_k4}"
+    print(f"  ✓ 花牌 {n_to_chinese(136)} 不可槓 → None")
+
     print("\n--- is_win_ext 驗收 ---")
     # 1. chi_count=0：結果與 is_win 相同（17 張胡牌）
     #    手牌 16 張：1筒對(0,1) + 2-6筒各刻子 → extra=22(6筒第3副)

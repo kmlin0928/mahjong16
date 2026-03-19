@@ -133,6 +133,7 @@ class PlayerState:
     table: list[int] = field(default_factory=list)
     seen: list[int] = field(default_factory=lambda: [0] * (SUITED_KINDS + HONOR_KINDS))
     discards: list[int] = field(default_factory=list)
+    chi_count: int = 0   # 本局已吃的面子數（每吃一次 +1）
 
     def add_seen(self, tile: int) -> None:
         """記錄某張牌已出現（包含自己摸到或他人打出）。
@@ -584,6 +585,29 @@ def is_win(hand: list[int], extra: int) -> bool:
             honor[honor_idx] += 2
 
     return False
+
+
+def is_win_ext(hand: list[int], extra: int, meld_count: int = 0) -> bool:
+    """計入桌面已成面子的胡牌判定。
+
+    吃過 meld_count 次後，手牌張數 = (5 - meld_count) * 3 + 2。
+    由於 is_win 內部以 find_pair / is_suit / is_honor 動態處理任意張數，
+    本函式直接委派給 is_win，不重複邏輯。
+
+    meld_count = 0 時等同 is_win（17 張）：
+        hand 14 張，meld_count = 1 → 4 面子 + 1 將
+        hand 11 張，meld_count = 2 → 3 面子 + 1 將
+        （以此類推）
+
+    Args:
+        hand:       手牌列表（長度為 16 - meld_count * 2 或對應值）
+        extra:      摸入的 1 張牌號
+        meld_count: 已吃（或碰/槓）移至桌面的面子數，預設 0
+
+    Returns:
+        構成胡牌回傳 True，否則 False
+    """
+    return is_win(hand, extra)
 
 
 # ---------------------------------------------------------------------------

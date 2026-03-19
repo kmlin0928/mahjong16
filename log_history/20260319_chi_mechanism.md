@@ -51,13 +51,14 @@
 - **驗收**：README 清楚描述吃牌流程
 - `e0b9f1a` docs: README 新增吃牌機制說明（can_chi、流程、is_win_ext）
 
-### 5. [/] `__main__` 驗收測試：`can_chi` 與 `is_win_ext`
+### 5. [v] `__main__` 驗收測試：`can_chi` 與 `is_win_ext`
 
 - **檔案範圍**：`mahjong.py`（`__main__` 測試區塊末尾）
 - **摘要**：
   - `can_chi`：前吃/夾吃/後吃三種情境；無法吃的情境
   - `is_win_ext`：1 吃後正確胡牌、0 吃與 `is_win` 結果一致
 - **驗收**：所有 assert 通過
+- `71ce4d6` test(mahjong-py): 新增 can_chi 與 is_win_ext __main__ 驗收測試
 
 ---
 

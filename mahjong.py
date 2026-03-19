@@ -334,6 +334,20 @@ def find_hand_pungs(suited: list[int]) -> list[tuple[int, int]]:
     return [(i, c) for i, c in enumerate(suited) if c >= 2]
 
 
+def find_hand_pairs(honor: list[int]) -> list[int]:
+    """找出字牌中的對子候選（張數 >= 2）。
+
+    對子（含將牌候選）或刻子皆屬湊牌中，應標記為 EXTREMELY_DANGEROUS。
+
+    Args:
+        honor: 長度 HONOR_KINDS 的列表，索引為字牌牌面種類，值為張數
+
+    Returns:
+        張數 >= 2 的牌面種類索引列表
+    """
+    return [i for i, c in enumerate(honor) if c >= 2]
+
+
 def is_suit(suited: list[int]) -> bool:
     """Theorem 1：以貪婪遞迴判斷數牌是否可完整分解為刻子或順子。
 

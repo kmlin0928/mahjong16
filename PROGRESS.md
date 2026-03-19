@@ -39,13 +39,14 @@
 - **驗收**：`uv run mahjong.py` 執行無誤，現有測試不受影響
 - `f67b5a0` feat(mahjong-py): 修改 decide_play 整合 DangerLevel 棄牌策略
 
-### 4. [ ] 更新主迴圈 — 傳入 players，偵測並顯示「拆牌」
+### 4. [v] 更新主迴圈 — 傳入 players，偵測並顯示「拆牌」
 
 - **檔案範圍**：`mahjong.py`（`main()` 中 `decide_play` 呼叫處）
 - **摘要**：
   - 改為 `decide_play(p, ai, m.players)` 並取得回傳的 DangerLevel
   - 若 level == `EXTREMELY_DANGEROUS`，在打牌訊息後加上 `（拆牌）` 標注
 - **驗收**：執行主遊戲時，必要時印出「拆牌」
+- `3350d1e` feat(mahjong-py): 主迴圈傳入 players 啟用 DangerLevel 棄牌策略
 
 ### 5. [ ] README 新增 AI 策略說明與「拆牌」術語
 

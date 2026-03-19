@@ -18,7 +18,7 @@
 - **驗收**：可被後續函式呼叫，結果正確區分湊牌與孤張
 - `75b9cde` feat(mahjong-py): 新增 _get_meld_kinds 偵測手牌湊牌種類集合
 
-### 2. [/] 新增 `danger_discard_index` — 按 DangerLevel 選出最佳棄牌索引
+### 2. [v] 新增 `danger_discard_index` — 按 DangerLevel 選出最佳棄牌索引
 
 - **檔案範圍**：`mahjong.py`（`_get_meld_kinds` 正下方）
 - **摘要**：
@@ -27,6 +27,7 @@
   - 選出最小 DangerLevel；同等級優先棄字牌；無字牌則棄離 5（5筒/5索/5萬）最遠的數牌
   - 回傳 `tuple[int, DangerLevel]`（索引、選中牌的等級），供呼叫端判斷是否拆牌
 - **驗收**：已知情境下選出正確索引
+- `3f728d1` feat(mahjong-py): 新增 danger_discard_index 按 DangerLevel 選出棄牌
 
 ### 3. [ ] 修改 `decide_play` — 整合 DangerLevel 策略，替換 Stage 2+3
 

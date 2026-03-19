@@ -654,34 +654,51 @@ def calculate_gates(m: Mahjong, p: PlayerState, ai: AIContext) -> None:
             ai.gates[i] = gate_count
 
 
-def decide_play(p: PlayerState, ai: AIContext) -> int:
+def decide_play(
+    p: PlayerState,
+    ai: AIContext,
+    players: list[PlayerState] | None = None,
+) -> tuple[int, DangerLevel] | int:
     """三階段 AI 出牌策略，回傳要打出的手牌索引。
 
     優先順序：
     1. 打出後聽牌數最多的牌（ai.gates 中 value 最大）
-    2. 若無聽牌，打出「已見張數最多」的牌（ai.play_freq 中 value 最小）
-    3. 隨機選一張（保底）
+    2. 若無聽牌且 players 有值：以 danger_discard_index 按 DangerLevel 選牌
+    3. 若 players 為 None（向下相容）：打出「已見張數最多」的牌，最後保底隨機
 
     Args:
-        p:  玩家狀態
-        ai: AI 決策資料（已由 calculate_gates 填入）
+        p:       玩家狀態
+        ai:      AI 決策資料（已由 calculate_gates 填入）
+        players: 四位玩家狀態列表（傳入時啟用 DangerLevel 策略，回傳 tuple）
 
     Returns:
-        要打出的手牌索引（0 ~ n_hand）
+        players 為 None 時回傳 int（向下相容）；
+        players 有值時回傳 (棄牌索引, DangerLevel)，DangerLevel 為
+        EXTREMELY_DANGEROUS 代表此次為「拆牌」。
     """
     total = p.n_hand + 1
 
     # 階段一：聽牌數最多
     if ai.gates:
         best_idx = max(ai.gates, key=lambda k: ai.gates[k])
+        if players is not None:
+            meld_kinds = _get_meld_kinds(p.hand)
+            kind = p.hand[best_idx] // COPIES
+            level = (DangerLevel.EXTREMELY_DANGEROUS if kind in meld_kinds
+                     else classify_danger(p.hand[best_idx], players))
+            return best_idx, level
         return best_idx
 
-    # 階段二：已見張數最多（play_freq 值最小 = 最難再摸到 = 最適合打出）
+    # 階段二+三：DangerLevel 策略（players 有值）
+    if players is not None:
+        return danger_discard_index(p.hand, players)
+
+    # 向下相容：已見張數最多
     if ai.play_freq:
         best_idx = min(ai.play_freq, key=lambda k: ai.play_freq[k])
         return best_idx
 
-    # 階段三：隨機
+    # 保底隨機
     return _random.randint(0, total - 1)
 
 

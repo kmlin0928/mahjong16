@@ -20,15 +20,16 @@
 - **驗收**：遊戲輸出清楚區分花牌與面牌組，吃/碰/槓組可見括號分組
 - `1ce9a98` feat(mahjong-py): 面牌分組顯示（bonus/melds 欄位取代 table）
 
-### 2. [/] AI seen 補記 — 吃/碰/槓後將手牌移出的牌記入其他玩家 seen
+### 2. [v] AI seen 補記 — 吃/碰/槓後將手牌移出的牌記入其他玩家 seen
 
 - **檔案範圍**：`mahjong.py`（`main()` chi/pon/kong 執行段落）
 - **摘要**：
   - 棄牌已透過 `add_seen` 通知其他玩家，但手牌中移出的配牌（ta, tb 或 ta,tb,tc）尚未記錄
   - 吃/碰/槓完成後，對其餘三家呼叫 `add_seen(ta)` / `add_seen(tb)` 等，讓 AI 知道這些牌已公開
 - **驗收**：`seen` 統計包含面牌組的每張牌；DangerLevel 計算更準確
+- `35483d5` feat(mahjong-py): 吃/碰/槓後補記手牌配牌至其他玩家 seen
 
-### 3. [ ] 重構主迴圈 — 抽出 `_do_chi` / `_do_pon` / `_do_kong` 輔助函式
+### 3. [/] 重構主迴圈 — 抽出 `_do_chi` / `_do_pon` / `_do_kong` 輔助函式
 
 - **檔案範圍**：`mahjong.py`（`main()` 下方新增輔助函式區塊）
 - **摘要**：

@@ -1381,6 +1381,34 @@ if __name__ == "__main__":
     print(f"  ✓ chi_count=1（14張）→ is_win_ext={_iwe2}")
 
 
+def _do_meld(
+    m: "Mahjong",
+    discard_player: int,
+    meld_player: int,
+    discard_tile: int,
+    hand_tiles: list[int],
+) -> None:
+    """吃/碰/槓共用：移牌至面牌組、補記 seen、移除棄牌記錄。
+
+    Args:
+        m:              遊戲物件
+        discard_player: 打出棄牌的玩家索引
+        meld_player:    執行吃/碰/槓的玩家索引
+        discard_tile:   被吃/碰/槓的棄牌
+        hand_tiles:     從手牌移出的配牌列表（吃/碰 2 張，槓 3 張）
+    """
+    mp = m.players[meld_player]
+    for t in hand_tiles:
+        mp.hand.remove(t)
+    mp.melds.append(hand_tiles + [discard_tile])
+    m.players[discard_player].discards.pop()
+    # 配牌已公開，通知其他玩家
+    for t in hand_tiles:
+        for obs in range(4):
+            if obs != meld_player:
+                m.players[obs].add_seen(t)
+
+
 def main() -> None:
     """四人 AI 麻將主遊戲迴圈。
 
@@ -1469,14 +1497,8 @@ def main() -> None:
                     cand_p.hand.remove(ta)
                     cand_p.hand.remove(tb)
                     cand_p.hand.remove(tc)
-                    cand_p.melds.append([ta, tb, tc, discard_tile])
+                    _do_meld(m, player, cand_idx, discard_tile, [ta, tb, tc])
                     cand_p.kong_count += 1
-                    p.discards.pop()    # 棄牌被槓走，移出海底
-                    # 槓牌的手牌配牌（ta,tb,tc）公開，通知其他玩家已見
-                    for hand_tile in (ta, tb, tc):
-                        for obs in range(4):
-                            if obs != cand_idx:
-                                m.players[obs].add_seen(hand_tile)
                     print(
                         f"\n  {cand_idx}槓 {n_to_chinese(discard_tile)}"
                         f"（{n_to_chinese(ta)} {n_to_chinese(tb)} {n_to_chinese(tc)}）",
@@ -1496,16 +1518,8 @@ def main() -> None:
                 pon_pair = can_pon(cand_p.hand, discard_tile)
                 if pon_pair is not None:
                     ta, tb = pon_pair
-                    cand_p.hand.remove(ta)
-                    cand_p.hand.remove(tb)
-                    cand_p.melds.append([ta, tb, discard_tile])
+                    _do_meld(m, player, cand_idx, discard_tile, [ta, tb])
                     cand_p.pon_count += 1
-                    p.discards.pop()    # 棄牌被碰走，移出海底
-                    # 碰牌的手牌配牌（ta,tb）公開，通知其他玩家已見
-                    for hand_tile in (ta, tb):
-                        for obs in range(4):
-                            if obs != cand_idx:
-                                m.players[obs].add_seen(hand_tile)
                     print(
                         f"\n  {cand_idx}碰 {n_to_chinese(discard_tile)}"
                         f"（{n_to_chinese(ta)} {n_to_chinese(tb)}）",
@@ -1523,16 +1537,8 @@ def main() -> None:
             chi_pair = can_chi(np.hand, discard_tile) if discard_tile < SUITED_END else None
             if chi_pair is not None:
                 ta, tb = chi_pair
-                np.hand.remove(ta)
-                np.hand.remove(tb)
-                np.melds.append([ta, tb, discard_tile])
+                _do_meld(m, player, next_idx, discard_tile, [ta, tb])
                 np.chi_count += 1
-                p.discards.pop()    # 棄牌被吃走，移出海底
-                # 吃牌的手牌配牌（ta,tb）公開，通知其他玩家已見
-                for hand_tile in (ta, tb):
-                    for obs in range(4):
-                        if obs != next_idx:
-                            m.players[obs].add_seen(hand_tile)
                 print(
                     f"\n  {next_idx}吃 {n_to_chinese(discard_tile)}"
                     f"（{n_to_chinese(ta)} {n_to_chinese(tb)}）",

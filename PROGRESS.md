@@ -28,7 +28,7 @@
 - **驗收**：`is_win_ext(hand13, extra, 1)` 在正確情境下回傳 True
 - `0657f70` feat(mahjong-py): 新增 chi_count 欄位與 is_win_ext 胡牌判定
 
-### 3. [ ] 更新主迴圈 — 棄牌後自動吃牌，支援吃牌後直接棄牌
+### 3. [v] 更新主迴圈 — 棄牌後自動吃牌，支援吃牌後直接棄牌
 
 - **檔案範圍**：`mahjong.py`（`main()` 函式）
 - **摘要**：
@@ -40,6 +40,7 @@
   - Win check：`chi_count > 0` 的玩家改用 `is_win_ext`
   - 顯示：`N吃 X（A B）` 標注
 - **驗收**：遊戲執行時偶有「吃」標注，手牌數正確
+- `bfbb670` feat(mahjong-py): 主迴圈加入自動吃牌機制
 
 ### 4. [ ] README 更新吃牌機制說明
 

@@ -29,7 +29,7 @@
 - **驗收**：已知情境下選出正確索引
 - `3f728d1` feat(mahjong-py): 新增 danger_discard_index 按 DangerLevel 選出棄牌
 
-### 3. [ ] 修改 `decide_play` — 整合 DangerLevel 策略，替換 Stage 2+3
+### 3. [v] 修改 `decide_play` — 整合 DangerLevel 策略，替換 Stage 2+3
 
 - **檔案範圍**：`mahjong.py`（`decide_play` 函式）
 - **摘要**：
@@ -37,6 +37,7 @@
   - Stage 1（聽牌）保留；Stage 2+3 改為呼叫 `danger_discard_index`
   - 若 players 為 None，退回原有見牌數邏輯（向下相容）
 - **驗收**：`uv run mahjong.py` 執行無誤，現有測試不受影響
+- `f67b5a0` feat(mahjong-py): 修改 decide_play 整合 DangerLevel 棄牌策略
 
 ### 4. [ ] 更新主迴圈 — 傳入 players，偵測並顯示「拆牌」
 

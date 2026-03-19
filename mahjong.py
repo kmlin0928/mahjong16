@@ -1161,14 +1161,16 @@ def main() -> None:
         for gate_idx, chance in ai.gates.items():
             print(f" {n_to_chinese(p.hand[gate_idx])}={chance}", end="")
 
-        # 決定出牌
-        discard_idx = decide_play(p, ai)
+        # 決定出牌（傳入 players 啟用 DangerLevel 策略）
+        discard_idx, discard_level = decide_play(p, ai, m.players)  # type: ignore[misc]
         # 將摸入牌換入打出位置（維持 hand 長度 = n_hand）
         discard_tile = p.hand[discard_idx]
         p.hand[discard_idx] = p.hand[-1]
         p.hand.pop()
 
-        print(f"\n{player}打 {n_to_chinese(discard_tile)}_", end="")
+        # 拆牌：被迫棄出 EXTREMELY_DANGEROUS 牌（湊牌）
+        tear = "（拆牌）" if discard_level == DangerLevel.EXTREMELY_DANGEROUS else ""
+        print(f"\n{player}打 {n_to_chinese(discard_tile)}{tear}_", end="")
         for t in p.hand:
             print(f" {n_to_chinese(t)}", end="")
         if p.table:

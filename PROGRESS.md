@@ -9,13 +9,14 @@
 
 ## 任務清單
 
-### 1. [/] 重構棄牌資料結構：sea → discards
+### 1. [v] 重構棄牌資料結構：sea → discards
 - **檔案範圍**：`mahjong.py`（`PlayerState` 類別、`Mahjong` 類別）
 - **摘要**：在 `PlayerState` 新增 `discards: list[int]`，記錄該玩家打出的所有牌；
   `Mahjong.sea` 改為聚合屬性（或移除），統一從各玩家 `discards` 取得
 - **驗收**：`PlayerState` 有 `discards` 欄位且初始為空列表
+- Commit `2511efc`：refactor(mahjong-py): 新增 PlayerState.discards 個人棄牌紀錄
 
-### 2. [ ] 更新遊戲主迴圈的棄牌寫入
+### 2. [/] 更新遊戲主迴圈的棄牌寫入
 - **檔案範圍**：`mahjong.py`（`main()` 函式）
 - **摘要**：打牌時由 `m.sea.append(tile)` 改為 `p.discards.append(tile)`，
   移除或保留 `m.sea` 作為可選的完整紀錄（供顯示或演算法使用）

@@ -593,6 +593,27 @@ if __name__ == "__main__":
     assert 0 <= idx <= 16, f"decide_play 回傳索引應在 0–16，實際 {idx}"
     print(f"  ✓ decide_play() 回傳索引 {idx}（打出 {n_to_chinese(ai_hand[idx])}），無例外")
 
+    print("\n--- 棄牌紀錄驗收 ---")
+    import random as _r
+    _r.seed(99)
+    m_dis = Mahjong(n_hand=16)
+    m_dis.init_deal()
+    m_dis.show_bonus()
+    print()
+    for p in m_dis.players:
+        assert p.discards == [], "開局前 discards 應為空"
+    print("  ✓ 開局前各玩家 discards 為空")
+    # 模擬數回合打牌，手動寫入 discards
+    fake_tiles = [0, 4, 8, 12]
+    for i, p in enumerate(m_dis.players):
+        p.discards.append(fake_tiles[i])
+    total_discards = sum(len(p.discards) for p in m_dis.players)
+    assert total_discards == 4, f"總棄牌數應為 4，實際 {total_discards}"
+    sea = m_dis.sea
+    assert len(sea) == 4, f"sea 聚合長度應為 4，實際 {len(sea)}"
+    assert sea == [0, 4, 8, 12], f"sea 應依玩家順序交錯，實際 {sea}"
+    print("  ✓ discards 長度之和與 sea 聚合正確")
+
 
 def main() -> None:
     """四人 AI 麻將主遊戲迴圈。
@@ -652,8 +673,8 @@ def main() -> None:
             for t in p.table:
                 print(f"|{n_to_chinese(t)}", end="")
 
-        # 棄牌入海，其他三家記牌
-        m.sea.append(discard_tile)
+        # 棄牌記入該玩家個人棄牌紀錄，其他三家記牌
+        p.discards.append(discard_tile)
         for other in range(1, 4):
             m.players[(player + other) % 4].add_seen(discard_tile)
 

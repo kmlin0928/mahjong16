@@ -53,7 +53,7 @@
 - **驗收**：README 清楚描述明槓流程與 AI 控制方式
 - `8f03878` docs: README 新增明槓機制說明（can_kong、AI_AUTO_KONG、優先順序）
 
-### 5. [/] `__main__` 驗收測試：`can_kong`
+### 5. [v] `__main__` 驗收測試：`can_kong`
 
 - **檔案範圍**：`mahjong.py`（`__main__` 測試區塊，`can_pon` 測試正下方）
 - **摘要**：
@@ -62,6 +62,7 @@
   - 只有 2 張：回傳 None
   - 花牌不可槓：tile >= BONUS_START → 回傳 None
 - **驗收**：所有 assert 通過
+- `dcb63ca` test(mahjong-py): 新增 can_kong __main__ 驗收測試
 
 ---
 

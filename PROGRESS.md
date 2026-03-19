@@ -9,14 +9,15 @@
 
 ## 任務清單
 
-### 1. [/] 定義 DangerLevel 列舉與等級說明
+### 1. [v] 定義 DangerLevel 列舉與等級說明
 - **檔案範圍**：`mahjong.py`（新增常數區段）
 - **摘要**：以 `IntEnum` 定義四個等級常數：
   `VERY_SAFE=1`、`SAFE=2`、`DANGEROUS=3`、`VERY_DANGEROUS=4`，
   並附上完整 docstring 說明各等級的判定條件
 - **驗收**：可直接比較 `DangerLevel.VERY_SAFE < DangerLevel.DANGEROUS`
+- Commit `9179001`：feat(mahjong-py): 新增 DangerLevel 危險等級列舉
 
-### 2. [ ] 實作 classify_danger() 核心分類函式
+### 2. [/] 實作 classify_danger() 核心分類函式
 - **檔案範圍**：`mahjong.py`（AI 放槍預防輔助函式區段）
 - **摘要**：`classify_danger(tile, players, target_idx, round_num)` 依序判斷：
   1. **很安全**：花牌（>= BONUS_START），或全局棄牌中出現 ≥ 2 次

@@ -556,6 +556,95 @@ def get_dangerous_tiles(players: list[PlayerState], target_idx: int) -> dict[int
     return freq
 
 
+def classify_danger(
+    tile: int,
+    players: list[PlayerState],
+    *,
+    chi_tiles: list[int] | None = None,
+    pon_tiles: list[int] | None = None,
+    kong_tiles: list[int] | None = None,
+) -> DangerLevel:
+    """評估打出某張牌的放槍危險等級。
+
+    判定優先順序（由安全至危險）：
+
+    1. **很安全（VERY_SAFE）**
+       - 花牌（tile >= BONUS_START）
+       - 全局棄牌（所有玩家 discards 合計）中同牌面出現 ≥ 2 次
+       - 未來擴充：chi_tiles / pon_tiles / kong_tiles 中出現的牌面
+
+    2. **安全（SAFE）**
+       - 字牌（wind 或 dragon）：無順子組合，放槍威脅有限
+       - 最近 3 輪（3 × 4 = 12 筆）全局棄牌中出現過
+
+    3. **危險（DANGEROUS）**
+       - 數牌，曾出現在早期棄牌（超過最近 12 筆），但最近 12 筆未出現
+
+    4. **很危險（VERY_DANGEROUS）**
+       - 數牌，從未出現在任何人的棄牌中
+       - 未來擴充：也未被吃（下一家）、碰/槓（其他三家）
+
+    Args:
+        tile:       欲評估的牌號整數
+        players:    四位玩家的狀態列表（使用各玩家 discards）
+        chi_tiles:  已被吃的牌面列表（預留，目前傳 None 視為空）
+        pon_tiles:  已被碰的牌面列表（預留，目前傳 None 視為空）
+        kong_tiles: 已被槓的牌面列表（預留，目前傳 None 視為空）
+
+    Returns:
+        DangerLevel 列舉值
+    """
+    kind = tile // COPIES
+
+    # 花牌：很安全
+    if tile >= BONUS_START:
+        return DangerLevel.VERY_SAFE
+
+    # 蒐集全局棄牌（依輪次交錯順序）
+    all_discards: list[int] = []
+    max_len = max((len(p.discards) for p in players), default=0)
+    for i in range(max_len):
+        for p in players:
+            if i < len(p.discards):
+                all_discards.append(p.discards[i])
+
+    # 預留：吃/碰/槓牌面（目前不使用）
+    _chi  = chi_tiles  or []
+    _pon  = pon_tiles  or []
+    _kong = kong_tiles or []
+    meld_kinds = {t // COPIES for t in _chi + _pon + _kong}
+
+    # 全局出現次數
+    global_count = sum(1 for t in all_discards if t // COPIES == kind)
+
+    # 很安全：全局出現 ≥ 2 次，或曾被吃/碰/槓
+    if global_count >= 2 or kind in meld_kinds:
+        return DangerLevel.VERY_SAFE
+
+    # 字牌：安全
+    if SUITED_END // COPIES <= kind < (DRAGON_END // COPIES):
+        return DangerLevel.SAFE
+
+    # 最近 3 輪 = 最後 12 筆全局棄牌
+    recent = all_discards[-12:]
+    recent_kinds = {t // COPIES for t in recent}
+
+    # 安全：最近 3 輪有人打出過
+    if kind in recent_kinds:
+        return DangerLevel.SAFE
+
+    # 早期棄牌（12 筆以前）是否出現過
+    early = all_discards[:-12] if len(all_discards) > 12 else []
+    early_kinds = {t // COPIES for t in early}
+
+    # 危險：曾在早期出現但最近 3 輪未出現
+    if kind in early_kinds:
+        return DangerLevel.DANGEROUS
+
+    # 很危險：從未出現
+    return DangerLevel.VERY_DANGEROUS
+
+
 # ---------------------------------------------------------------------------
 # 快速驗收（執行此模組時顯示）
 # ---------------------------------------------------------------------------

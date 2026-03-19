@@ -49,13 +49,14 @@
 - **驗收**：`uv run mahjong.py` 執行無誤
 - `8ba9017` fix(mahjong-py): 修正 find_hand_pungs 條件為 c >= 3（刻子/槓子）
 
-### 5. [ ] `__main__` 驗收測試：find_hand_pungs（刻子/槓子）與 find_hand_pairs
+### 5. [v] `__main__` 驗收測試：find_hand_pungs（刻子/槓子）與 find_hand_pairs
 
 - **檔案範圍**：`mahjong.py`（`__main__` 測試區塊末尾）
 - **摘要**：
   - `find_hand_pungs`：c=2（不回傳）、c=3（刻子，回傳）、c=4（槓子，回傳）、空手牌
   - `find_hand_pairs`：c=2（對子，回傳）、c=1（不回傳）、c=3（也算 >= 2，回傳）
 - **驗收**：所有 assert 通過，`uv run mahjong.py` 執行無誤
+- `9bd07f7` test(mahjong-py): 新增 find_hand_pungs/find_hand_pairs 驗收測試
 
 ---
 

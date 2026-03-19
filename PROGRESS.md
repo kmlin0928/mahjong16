@@ -48,13 +48,14 @@
 - **驗收**：執行主遊戲時，必要時印出「拆牌」
 - `3350d1e` feat(mahjong-py): 主迴圈傳入 players 啟用 DangerLevel 棄牌策略
 
-### 5. [ ] README 新增 AI 策略說明與「拆牌」術語
+### 5. [v] README 新增 AI 策略說明與「拆牌」術語
 
 - **檔案範圍**：`README.md`
 - **摘要**：
   - 說明新三階段策略：聽牌 > DangerLevel 最小 > 字牌優先 > 離5最遠
   - 加入「拆牌」定義：被迫棄出 EXTREMELY_DANGEROUS 牌（湊牌）時稱為拆牌
 - **驗收**：README 說明清楚，`uv run mahjong.py` 無誤
+- `bc2b791` docs: README 更新 Python AI 三階段棄牌策略與「拆牌」定義
 
 ### 6. [ ] `__main__` 驗收測試：`danger_discard_index` 情境測試
 

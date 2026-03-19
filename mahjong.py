@@ -1116,6 +1116,37 @@ if __name__ == "__main__":
     assert find_hand_pairs(_h3) == [0], f"c=3 應回傳 [0]，實際 {find_hand_pairs(_h3)}"
     print("  ✓ c=3（字牌刻子）→ 也算對子候選 [0]")
 
+    print("\n--- danger_discard_index 驗收 ---")
+    _ep = [PlayerState(n_hand=16) for _ in range(4)]  # 全空棄牌
+
+    # 1. 湊牌 vs 孤張：1-2-3筒形成順子（湊牌），東為孤張（SAFE）→ 棄東
+    _hand1 = [0, 4, 8, 108]   # 1筒、2筒、3筒、東
+    _idx1, _lv1 = danger_discard_index(_hand1, _ep)
+    assert _idx1 == 3, f"應棄東（index 3），實際棄 {n_to_chinese(_hand1[_idx1])}（index {_idx1}）"
+    assert _lv1 == DangerLevel.SAFE, f"等級應為 SAFE，實際 {_lv1.name}"
+    print(f"  ✓ 湊牌 vs 孤張 → 棄 {n_to_chinese(_hand1[_idx1])}（{_lv1.name}）")
+
+    # 2. 同等級字牌優先棄：1筒已見（SAFE）+ 東（SAFE）→ 優先棄字牌東
+    _ep2 = [PlayerState(n_hand=16) for _ in range(4)]
+    _ep2[0].discards = [0]    # 1筒出現一次 → 最近 12 筆內 → SAFE
+    _hand2 = [0, 108]         # 1筒、東
+    _idx2, _lv2 = danger_discard_index(_hand2, _ep2)
+    assert _idx2 == 1, f"同等級應優先棄字牌（index 1），實際棄 {n_to_chinese(_hand2[_idx2])}"
+    assert _lv2 == DangerLevel.SAFE
+    print(f"  ✓ 同等級字牌優先 → 棄 {n_to_chinese(_hand2[_idx2])}（{_lv2.name}）")
+
+    # 3. 全數牌同等級，棄離5最遠：5筒（distance=0）vs 9筒（distance=4）→ 棄9筒
+    _hand3 = [16, 32]         # 5筒（kind=4）、9筒（kind=8）
+    _idx3, _lv3 = danger_discard_index(_hand3, _ep)
+    assert _idx3 == 1, f"應棄離5最遠的9筒（index 1），實際棄 {n_to_chinese(_hand3[_idx3])}"
+    print(f"  ✓ 離5最遠 → 棄 {n_to_chinese(_hand3[_idx3])}（{_lv3.name}）")
+
+    # 4. 全湊牌（拆牌）：1-2-3筒全為湊牌 → 被迫拆牌，level 為 EXTREMELY_DANGEROUS
+    _hand4 = [0, 4, 8]        # 1筒、2筒、3筒 → chow(0,1,2)
+    _idx4, _lv4 = danger_discard_index(_hand4, _ep)
+    assert _lv4 == DangerLevel.EXTREMELY_DANGEROUS, f"全湊牌應為拆牌，實際 {_lv4.name}"
+    print(f"  ✓ 全湊牌拆牌 → 棄 {n_to_chinese(_hand4[_idx4])}（{_lv4.name}）= 拆牌")
+
 
 def main() -> None:
     """四人 AI 麻將主遊戲迴圈。

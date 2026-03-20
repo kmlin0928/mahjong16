@@ -1603,6 +1603,17 @@ def score_hand(
     elif _wind_pungs == WIND_KINDS - 1 and _wind_pairs >= 1:
         result.append(("小四喜", 6))
 
+    # 獨聽：胡牌前的手牌只有一種牌面可以完成胡牌
+    meld_count = p.chi_count + p.pon_count + p.kong_count
+    hand_for_gates = list(hand_all)
+    hand_for_gates.remove(winning_tile)
+    wait_kinds = sum(
+        1 for kind in range(SUITED_KINDS + HONOR_KINDS)
+        if is_win_ext(hand_for_gates, kind * COPIES, meld_count)
+    )
+    if wait_kinds == 1:
+        result.append(("獨聽", 1))
+
     return result
 
 

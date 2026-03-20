@@ -1567,6 +1567,21 @@ def score_hand(
     elif concealed_pungs >= 3:
         result.append(("三暗刻", 2))
 
+    # 大三元 / 小三元：統計三元牌（中/發/白）在全局手牌（含明牌）的數量
+    _counts_all = _Counter(t // COPIES for t in all_non_bonus)
+    _dragon_pungs = sum(
+        1 for k in range(dragon_base, dragon_base + DRAGON_COUNT)
+        if _counts_all[k] >= 3
+    )
+    _dragon_pairs = sum(
+        1 for k in range(dragon_base, dragon_base + DRAGON_COUNT)
+        if _counts_all[k] == 2
+    )
+    if _dragon_pungs == DRAGON_COUNT:
+        result.append(("大三元", 8))
+    elif _dragon_pungs == DRAGON_COUNT - 1 and _dragon_pairs >= 1:
+        result.append(("小三元", 4))
+
     return result
 
 

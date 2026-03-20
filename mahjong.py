@@ -1416,6 +1416,54 @@ def _do_meld(
                 m.players[obs].add_seen(t)
 
 
+def score_hand(
+    winner: int,
+    dealer_idx: int,
+    consecutive: int,
+    is_tsumo: bool,
+    p: "PlayerState",
+    winning_tile: int,
+    game_wind: str,
+    seat_winds: list[str],
+) -> list[tuple[str, int]]:
+    """計算胡牌台數明細。
+
+    Args:
+        winner:       胡牌玩家索引
+        dealer_idx:   本局莊家索引
+        consecutive:  連莊次數（0 = 首局）
+        is_tsumo:     True = 自摸胡；False = 放槍胡
+        p:            胡牌玩家的 PlayerState（hand 含摸入的完整手牌）
+        winning_tile: 胡牌的那張牌
+        game_wind:    局風字串（"東"/"南"/"西"/"北"）
+        seat_winds:   四家門風列表（seat_winds[winner] = 自風）
+
+    Returns:
+        (規則名稱, 台數) 的列表，台數均為正整數。
+    """
+    result: list[tuple[str, int]] = []
+    seat_wind = seat_winds[winner]
+
+    # --- 基礎台數 ---
+    if winner == dealer_idx:
+        result.append(("莊家", 1))
+    if consecutive >= 1:
+        result.append(("拉莊", consecutive))
+
+    has_meld = (p.chi_count + p.pon_count + p.kong_count) > 0
+
+    if is_tsumo:
+        if not has_meld:
+            result.append(("不求", 2))    # 不求 = 門清 + 自摸（合並計 2 台）
+        else:
+            result.append(("自摸", 1))
+    else:
+        if not has_meld:
+            result.append(("門清", 1))
+
+    return result
+
+
 def main(
     dealer_idx_override: int | None = None,
     consecutive: int = 0,

@@ -1490,6 +1490,8 @@ def score_hand(
     else:
         if not has_meld:
             result.append(("門清", 1))
+        else:
+            result.append(("半求", 1))
 
     # --- 花牌台數（己位花）---
     wind_pos = _SEAT_WIND_NAMES.index(seat_wind)

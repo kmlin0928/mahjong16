@@ -1461,6 +1461,41 @@ def score_hand(
         if not has_meld:
             result.append(("門清", 1))
 
+    # --- 花牌台數（己位花）---
+    wind_pos = _SEAT_WIND_NAMES.index(seat_wind)
+    own_bonus = {BONUS_START + wind_pos, BONUS_START + 4 + wind_pos}
+    own_flower_count = sum(1 for t in p.bonus if t in own_bonus)
+    if own_flower_count:
+        result.append((f"花牌", own_flower_count))
+
+    # --- 字牌台數（需 melds 中含刻子/槓子）---
+    seat_wind_kind  = SUITED_KINDS + wind_pos                         # 27–30
+    game_wind_kind  = SUITED_KINDS + _SEAT_WIND_NAMES.index(game_wind)  # 27–30
+    dragon_base     = SUITED_KINDS + WIND_KINDS                       # 31
+
+    for meld in p.melds:
+        if len(meld) < 3:
+            continue
+        first_kind = meld[0] // COPIES
+        # 判斷是否為刻子（pung）或槓子（kong）：所有牌同一 kind
+        if not all(t // COPIES == first_kind for t in meld):
+            continue  # 吃牌（順子）跳過
+        if first_kind == seat_wind_kind:
+            result.append(("自風", 1))
+        if first_kind == game_wind_kind and game_wind_kind != seat_wind_kind:
+            result.append(("圈風", 1))
+        if dragon_base <= first_kind < dragon_base + DRAGON_COUNT:
+            result.append(("三元牌", 1))
+
+    # 花槓：春夏秋冬 或 梅蘭竹菊 湊齊 4 張
+    bonus_set = set(p.bonus)
+    season_set = {BONUS_START, BONUS_START+1, BONUS_START+2, BONUS_START+3}
+    plant_set  = {BONUS_START+4, BONUS_START+5, BONUS_START+6, BONUS_START+7}
+    if season_set.issubset(bonus_set):
+        result.append(("花槓(春夏秋冬)", 2))
+    if plant_set.issubset(bonus_set):
+        result.append(("花槓(梅蘭竹菊)", 2))
+
     return result
 
 

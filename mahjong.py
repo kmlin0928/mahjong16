@@ -1760,7 +1760,8 @@ def main(
     dealer_p = m.players[dealer_idx]
     dealer_extra = m.deal_one()
     dealer_p.hand.append(dealer_extra)
-    print(f"\n莊家（座位{dealer_idx}）多摸 {n_to_chinese(dealer_extra)}")
+    _show_dealer_tile = not contest_mode or dealer_idx == HUMAN_PLAYER
+    print(f"\n莊家（座位{dealer_idx}）多摸{' ' + n_to_chinese(dealer_extra) if _show_dealer_tile else ''}")
 
     # 補花並顯示初始手牌（contest_mode 時隱藏 AI 手牌）
     import contextlib as _cl, io as _io

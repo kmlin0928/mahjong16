@@ -1471,6 +1471,7 @@ def score_hand(
             - 自摸 +1：有副露自摸胡
             - 門清 +1：無副露放槍胡
             - 半求 +1：有副露放槍胡
+        獨聽 +1：胡牌前手牌對全部 34 種牌面掃描，只有 1 種能完成胡牌
     """
     result: list[tuple[str, int]] = []
     seat_wind = seat_winds[winner]

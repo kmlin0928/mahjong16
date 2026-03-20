@@ -1496,6 +1496,40 @@ def score_hand(
     if plant_set.issubset(bonus_set):
         result.append(("花槓(梅蘭竹菊)", 2))
 
+    # --- 手型台數 ---
+    # 收集全部非花牌（melds + hand，ron 時補入 winning_tile）
+    hand_all = list(p.hand)
+    if not is_tsumo:
+        hand_all.append(winning_tile)
+    meld_flat = [t for meld in p.melds for t in meld]
+    all_non_bonus = [t for t in hand_all + meld_flat if t < BONUS_START]
+
+    # 花色分析
+    def _suit_of(t: int) -> int | None:
+        """回傳數牌花色索引（0筒/1索/2萬），字牌回傳 None。"""
+        if t < SUITED_END:
+            return t // (TILES_PER_SUIT * COPIES)
+        return None
+
+    suits_used = {_suit_of(t) for t in all_non_bonus if _suit_of(t) is not None}
+    has_honor = any(t >= SUITED_END for t in all_non_bonus)
+
+    # 清一色：單一數牌花色，無字牌
+    if len(suits_used) == 1 and not has_honor:
+        result.append(("清一色", 8))
+    # 混一色：單一數牌花色 + 字牌，無其他花色
+    elif len(suits_used) == 1 and has_honor:
+        result.append(("混一色", 4))
+
+    # 碰碰胡：無吃牌，且手牌（含摸入）可分解為刻子 + 對眼
+    if p.chi_count == 0:
+        from collections import Counter as _Counter
+        counts = _Counter(t // COPIES for t in hand_all)
+        pairs_in_hand = sum(1 for c in counts.values() if c % 3 == 2)
+        all_valid = all(c % 3 in (0, 2) for c in counts.values())
+        if pairs_in_hand == 1 and all_valid:
+            result.append(("碰碰胡", 4))
+
     return result
 
 

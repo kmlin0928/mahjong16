@@ -1646,6 +1646,11 @@ def score_hand(
     ):
         result.append(("平胡", 2))
 
+    # 全求：放槍胡 + 閉門只剩 1 張（5 組面子全已副露，等最後一張完成胡牌）
+    # 此時半求(+1)已在基礎台數計入，全求再加 +2（兩者可疊加）
+    if not is_tsumo and len(p.hand) == 1:
+        result.append(("全求", 2))
+
     return result
 
 

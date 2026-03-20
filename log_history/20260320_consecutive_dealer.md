@@ -21,7 +21,7 @@
   - 連莊時，顯示標題加上「（連莊 N 次）」
 - **346924b** refactor(mahjong-py): main() 改為回傳 (winner, dealer_idx)，新增 dealer_idx_override/consecutive 參數
 
-### 2. [/] __main__ 改為連莊迴圈
+### 2. [v] __main__ 改為連莊迴圈
 
 - **檔案範圍**：`mahjong.py`（`if __name__ == "__main__":` 段落）
 - **摘要**：
@@ -35,6 +35,7 @@
   - 莊家胡牌 → 詢問繼續，y 則開新局並顯示連莊 N 次
   - 和局 → 同上
   - 非莊家胡牌 → 顯示「下莊」並結束，不繼續
+- **6d32039** feat(mahjong-py): 連莊迴圈 — 莊家胡/和局詢問續玩，累計連莊次數
 
 ---
 

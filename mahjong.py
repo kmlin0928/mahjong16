@@ -1448,19 +1448,21 @@ def score_hand(
     game_wind: str,
     seat_winds: list[str],
     is_rob_kong: bool = False,
+    is_kong_flower: bool = False,
 ) -> list[tuple[str, int]]:
     """計算胡牌台數明細。
 
     Args:
-        winner:        胡牌玩家索引
-        dealer_idx:    本局莊家索引
-        consecutive:   連莊次數（0 = 首局）
-        is_tsumo:      True = 自摸胡；False = 放槍胡
-        p:             胡牌玩家的 PlayerState（hand 含摸入的完整手牌）
-        winning_tile:  胡牌的那張牌
-        game_wind:     局風字串（"東"/"南"/"西"/"北"）
-        seat_winds:    四家門風列表（seat_winds[winner] = 自風）
-        is_rob_kong:   True = 搶槓胡，額外 +1 台
+        winner:         胡牌玩家索引
+        dealer_idx:     本局莊家索引
+        consecutive:    連莊次數（0 = 首局）
+        is_tsumo:       True = 自摸胡；False = 放槍胡
+        p:              胡牌玩家的 PlayerState（hand 含摸入的完整手牌）
+        winning_tile:   胡牌的那張牌
+        game_wind:      局風字串（"東"/"南"/"西"/"北"）
+        seat_winds:     四家門風列表（seat_winds[winner] = 自風）
+        is_rob_kong:    True = 搶槓胡，額外 +1 台
+        is_kong_flower: True = 槓上開花（補花/加槓補牌後自摸），額外 +1 台
 
     Returns:
         (規則名稱, 台數) 的列表，台數均為正整數。
@@ -1471,6 +1473,8 @@ def score_hand(
     # --- 基礎台數 ---
     if is_rob_kong:
         result.append(("搶槓", 1))
+    if is_kong_flower:
+        result.append(("槓上開花", 1))
     if winner == dealer_idx:
         result.append(("莊家", 1))
     if consecutive >= 1:
@@ -1615,18 +1619,22 @@ def main(
 
     player = dealer_idx
     skip_draw = True    # 莊家首輪跳過摸牌，直接出牌
+    after_supplement = False  # 是否為補花/加槓後補摸（跨回合保持，用於槓上開花判定）
     while m.remain:
         p = m.players[player]
         ai = m.ai[player]
 
         if not skip_draw:
             # 正常輪次：摸牌
+            after_supplement = False  # 每次正常摸牌重置
             drawn = m.deal_one()
+            _orig_drawn = drawn
             you = "（你）" if player == HUMAN_PLAYER else ""
             print(f"\n{player}摸{you} {n_to_chinese(drawn)}", end="")
             p.hand.append(drawn)
             m._draw_bonus(p, len(p.hand) - 1)
             drawn = p.hand[-1]      # 補花後的實際摸入牌
+            after_supplement = (_orig_drawn >= BONUS_START)  # 原為花牌則補牌視為槓上開花
             p.add_seen(drawn)
 
             # 判胡（摸牌後立即判斷；若補花失敗牌堆已空則 drawn 可能是花牌，跳過判胡）
@@ -1635,7 +1643,7 @@ def main(
                     ans = input(f"\n自摸胡！宣胡？(y/n) ").strip().lower()
                     if ans == "y":
                         print(f"\n{player}自摸胡 {n_to_chinese(drawn)}")
-                        _score = score_hand(player, dealer_idx, consecutive, True, p, drawn, game_wind, seat_winds)
+                        _score = score_hand(player, dealer_idx, consecutive, True, p, drawn, game_wind, seat_winds, is_kong_flower=after_supplement)
                         _total = sum(v for _, v in _score)
                         _detail = " ".join(f"{n}+{v}" for n, v in _score)
                         print(f"台數明細：{_detail} = 共 {_total} 台")
@@ -1645,7 +1653,7 @@ def main(
                     for t in p.hand[:-1]:
                         print(f" {n_to_chinese(t)}", end="")
                     print()
-                    _score = score_hand(player, dealer_idx, consecutive, True, p, drawn, game_wind, seat_winds)
+                    _score = score_hand(player, dealer_idx, consecutive, True, p, drawn, game_wind, seat_winds, is_kong_flower=after_supplement)
                     _total = sum(v for _, v in _score)
                     _detail = " ".join(f"{n}+{v}" for n, v in _score)
                     print(f"台數明細：{_detail} = 共 {_total} 台")
@@ -1712,6 +1720,7 @@ def main(
                             p.hand.append(extra)
                             m._draw_bonus(p, len(p.hand) - 1)
                             print(f" 補摸 {n_to_chinese(p.hand[-1])}", end="")
+                        after_supplement = True   # 加槓後補摸，觸發槓上開花條件
                         skip_draw = True
                         continue
         else:

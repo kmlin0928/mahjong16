@@ -1943,7 +1943,12 @@ def main(
             for t in p.bonus:
                 print(f" 花:{n_to_chinese(t)}", end="")
         for meld in p.melds:
-            print(f" [{' '.join(n_to_chinese(t) for t in meld)}]", end="")
+            # 吃牌（3 張且前兩張不同種）：棄牌（最後一張）置中顯示
+            if len(meld) == 3 and meld[0] // COPIES != meld[1] // COPIES:
+                display = [meld[0], meld[2], meld[1]]
+            else:
+                display = meld
+            print(f" [{' '.join(n_to_chinese(t) for t in display)}]", end="")
 
         # 棄牌記入各家記牌
         p.discards.append(discard_tile)

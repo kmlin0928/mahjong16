@@ -1434,10 +1434,16 @@ def main() -> None:
     start = _random.randint(0, 3)
     seat_winds = [_SEAT_WIND_NAMES[(start + i) % 4] for i in range(4)]
     human_wind = seat_winds[HUMAN_PLAYER]
+    dealer_idx = seat_winds.index("東")
     print(f"\n【你是 {human_wind}（座位 {HUMAN_PLAYER}）】")
     for i, w in enumerate(seat_winds):
-        label = "← 你" if i == HUMAN_PLAYER else ""
-        print(f"  座位{i} {w}{label}")
+        parts = []
+        if i == HUMAN_PLAYER:
+            parts.append("← 你")
+        if i == dealer_idx:
+            parts.append("★莊")
+        label = "  ".join(parts)
+        print(f"  座位{i} {w}  {label}" if label else f"  座位{i} {w}")
 
     m.show_bonus()
     print()

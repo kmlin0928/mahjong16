@@ -1706,6 +1706,7 @@ def _check_tenpai_initial(hand: list[int]) -> bool:
 def main(
     dealer_idx_override: int | None = None,
     consecutive: int = 0,
+    contest_mode: bool = False,
 ) -> tuple[int | None, int]:
     """四人 AI 麻將主遊戲迴圈。
 
@@ -2156,11 +2157,15 @@ if __name__ == "__main__":
         print(f"  ✓ 一局完整執行（{_elapsed:.2f}s），結尾：{_last.strip()!r}")
         print(f"  ✓ 含吃={has_chi} 含碰={has_pon}")
 
+    # 競賽模式：隱藏 AI 手牌，讓人類玩家真正與 AI 對戰
+    _ans = input("是否隱藏 AI 手牌（競賽模式）？(y/n) ").strip().lower()
+    contest = _ans == "y"
+
     # 連莊迴圈
     dealer_override: int | None = None
     consec = 0
     while True:
-        winner, dealer_idx = main(dealer_idx_override=dealer_override, consecutive=consec)
+        winner, dealer_idx = main(dealer_idx_override=dealer_override, consecutive=consec, contest_mode=contest)
         if winner == dealer_idx:
             print(f"\n莊家（座位{dealer_idx}）胡牌！連莊！")
         elif winner is None:

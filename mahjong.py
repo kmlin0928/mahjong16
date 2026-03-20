@@ -1605,9 +1605,11 @@ def score_hand(
         if _counts_all[k] == 2
     )
     if _wind_pungs == WIND_KINDS:
-        result.append(("大四喜", 13))
+        # 大四喜：清 16 台，原文規定不得加計自風/圈風台
+        result = [r for r in result if r[0] not in ("自風", "圈風")]
+        result.append(("大四喜", 16))
     elif _wind_pungs == WIND_KINDS - 1 and _wind_pairs >= 1:
-        result.append(("小四喜", 6))
+        result.append(("小四喜", 8))
 
     # 獨聽：胡牌前的手牌只有一種牌面可以完成胡牌
     meld_count = p.chi_count + p.pon_count + p.kong_count

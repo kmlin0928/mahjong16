@@ -1434,8 +1434,9 @@ def main() -> None:
     start = _random.randint(0, 3)
     seat_winds = [_SEAT_WIND_NAMES[(start + i) % 4] for i in range(4)]
     human_wind = seat_winds[HUMAN_PLAYER]
-    dealer_idx = seat_winds.index("東")
-    print(f"\n【你是 {human_wind}（座位 {HUMAN_PLAYER}）】")
+    game_wind = _random.choice(_SEAT_WIND_NAMES)
+    dealer_idx = seat_winds.index(game_wind)
+    print(f"\n【你是 {human_wind}（座位 {HUMAN_PLAYER}）｜{game_wind}局】")
     for i, w in enumerate(seat_winds):
         parts = []
         if i == HUMAN_PLAYER:

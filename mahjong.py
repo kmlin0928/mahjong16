@@ -1547,33 +1547,40 @@ def main() -> None:
                 )
                 return
 
-        # 檢查其他三家是否自動明槓（優先於碰，AI_AUTO_KONG 控制）
+        # 檢查其他三家是否明槓（AI_AUTO_KONG 控制；人類玩家詢問 y/n）
         kong_player: int | None = None
-        if AI_AUTO_KONG:
-            for offset in range(1, 4):
-                cand_idx = (player + offset) % 4
-                cand_p = m.players[cand_idx]
-                kong_triple = can_kong(cand_p.hand, discard_tile)
-                if kong_triple is not None:
-                    ta, tb, tc = kong_triple
-                    cand_p.hand.remove(ta)
-                    cand_p.hand.remove(tb)
-                    cand_p.hand.remove(tc)
-                    _do_meld(m, player, cand_idx, discard_tile, [ta, tb, tc])
-                    cand_p.kong_count += 1
-                    print(
-                        f"\n  {cand_idx}槓 {n_to_chinese(discard_tile)}"
-                        f"（{n_to_chinese(ta)} {n_to_chinese(tb)} {n_to_chinese(tc)}）",
-                        end="",
-                    )
-                    if PAUSE_ON_MELD:
-                        input("  [槓] 按 y + Enter 繼續: ")
-                    # 槓後正常摸牌（不設 skip_draw），玩家順序改為槓牌家
-                    player = cand_idx
-                    kong_player = cand_idx
-                    break
+        for offset in range(1, 4):
+            cand_idx = (player + offset) % 4
+            cand_p = m.players[cand_idx]
+            kong_triple = can_kong(cand_p.hand, discard_tile)
+            if kong_triple is not None:
+                if cand_idx == HUMAN_PLAYER:
+                    ans = input(
+                        f"\n  你可以槓 {n_to_chinese(discard_tile)}？(y/n) "
+                    ).strip().lower()
+                    if ans != "y":
+                        continue
+                elif not AI_AUTO_KONG:
+                    continue
+                ta, tb, tc = kong_triple
+                cand_p.hand.remove(ta)
+                cand_p.hand.remove(tb)
+                cand_p.hand.remove(tc)
+                _do_meld(m, player, cand_idx, discard_tile, [ta, tb, tc])
+                cand_p.kong_count += 1
+                print(
+                    f"\n  {cand_idx}槓 {n_to_chinese(discard_tile)}"
+                    f"（{n_to_chinese(ta)} {n_to_chinese(tb)} {n_to_chinese(tc)}）",
+                    end="",
+                )
+                if PAUSE_ON_MELD and cand_idx != HUMAN_PLAYER:
+                    input("  [槓] 按 y + Enter 繼續: ")
+                # 槓後正常摸牌（不設 skip_draw），玩家順序改為槓牌家
+                player = cand_idx
+                kong_player = cand_idx
+                break
 
-        # 無人明槓時，再檢查其他三家是否自動碰牌（優先於吃牌）
+        # 無人明槓時，再檢查其他三家碰牌（人類玩家詢問 y/n）
         pon_player: int | None = None
         if kong_player is None:
             for offset in range(1, 4):
@@ -1581,6 +1588,12 @@ def main() -> None:
                 cand_p = m.players[cand_idx]
                 pon_pair = can_pon(cand_p.hand, discard_tile)
                 if pon_pair is not None:
+                    if cand_idx == HUMAN_PLAYER:
+                        ans = input(
+                            f"\n  你可以碰 {n_to_chinese(discard_tile)}？(y/n) "
+                        ).strip().lower()
+                        if ans != "y":
+                            continue
                     ta, tb = pon_pair
                     _do_meld(m, player, cand_idx, discard_tile, [ta, tb])
                     cand_p.pon_count += 1
@@ -1589,7 +1602,7 @@ def main() -> None:
                         f"（{n_to_chinese(ta)} {n_to_chinese(tb)}）",
                         end="",
                     )
-                    if PAUSE_ON_MELD:
+                    if PAUSE_ON_MELD and cand_idx != HUMAN_PLAYER:
                         input("  [碰] 按 y + Enter 繼續: ")
                     skip_draw = True
                     player = cand_idx
@@ -1597,23 +1610,71 @@ def main() -> None:
                     break
 
         if kong_player is None and pon_player is None:
-            # 無人碰牌，再檢查下一家是否自動吃牌（僅限數牌）
+            # 無人碰牌，再檢查下一家是否吃牌（人類玩家詢問 y/n）
             next_idx = (player + 1) % 4
             np = m.players[next_idx]
             chi_pair = can_chi(np.hand, discard_tile) if discard_tile < SUITED_END else None
             if chi_pair is not None:
-                ta, tb = chi_pair
-                _do_meld(m, player, next_idx, discard_tile, [ta, tb])
-                np.chi_count += 1
-                print(
-                    f"\n  {next_idx}吃 {n_to_chinese(discard_tile)}"
-                    f"（{n_to_chinese(ta)} {n_to_chinese(tb)}）",
-                    end="",
-                )
-                if PAUSE_ON_MELD:
-                    input("  [吃] 按 y + Enter 繼續: ")
-                skip_draw = True
-                player = next_idx
+                do_chi = True
+                chosen_ta, chosen_tb = chi_pair
+                if next_idx == HUMAN_PLAYER:
+                    ans = input(
+                        f"\n  你可以吃 {n_to_chinese(discard_tile)}？(y/n) "
+                    ).strip().lower()
+                    if ans != "y":
+                        do_chi = False
+                    else:
+                        # 枚舉全部吃法供玩家選擇
+                        kind_d = discard_tile // COPIES
+                        rank_d = kind_d % TILES_PER_SUIT
+                        def _find_in(h: list[int], k: int) -> int | None:
+                            for t in h:
+                                if t // COPIES == k:
+                                    return t
+                            return None
+                        all_combos: list[tuple[int, int]] = []
+                        combo_kinds = []
+                        if rank_d >= 2:
+                            combo_kinds.append((kind_d - 2, kind_d - 1))
+                        if 1 <= rank_d <= 7:
+                            combo_kinds.append((kind_d - 1, kind_d + 1))
+                        if rank_d <= 6:
+                            combo_kinds.append((kind_d + 1, kind_d + 2))
+                        for ka, kb in combo_kinds:
+                            ta2 = _find_in(np.hand, ka)
+                            if ta2 is None:
+                                continue
+                            tmp = list(np.hand)
+                            tmp.remove(ta2)
+                            tb2 = _find_in(tmp, kb)
+                            if tb2 is not None:
+                                all_combos.append((ta2, tb2))
+                        if len(all_combos) > 1:
+                            print(f"\n  選擇吃法：")
+                            for ci, (ca, cb) in enumerate(all_combos):
+                                print(f"    [{ci}] {n_to_chinese(ca)} {n_to_chinese(discard_tile)} {n_to_chinese(cb)}")
+                            while True:
+                                raw = input(f"  輸入編號 (0–{len(all_combos)-1}): ").strip()
+                                if raw.isdigit() and 0 <= int(raw) < len(all_combos):
+                                    chosen_ta, chosen_tb = all_combos[int(raw)]
+                                    break
+                                print(f"  請輸入 0 到 {len(all_combos)-1} 之間的數字")
+                        else:
+                            chosen_ta, chosen_tb = all_combos[0]
+                if do_chi:
+                    _do_meld(m, player, next_idx, discard_tile, [chosen_ta, chosen_tb])
+                    np.chi_count += 1
+                    print(
+                        f"\n  {next_idx}吃 {n_to_chinese(discard_tile)}"
+                        f"（{n_to_chinese(chosen_ta)} {n_to_chinese(chosen_tb)}）",
+                        end="",
+                    )
+                    if PAUSE_ON_MELD and next_idx != HUMAN_PLAYER:
+                        input("  [吃] 按 y + Enter 繼續: ")
+                    skip_draw = True
+                    player = next_idx
+                else:
+                    player = (player + 1) % 4
             else:
                 player = (player + 1) % 4
 

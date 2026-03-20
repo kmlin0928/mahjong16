@@ -1552,13 +1552,20 @@ def score_hand(
         result.append(("混一色", 4))
 
     # 碰碰胡：無吃牌，且手牌（含摸入）可分解為刻子 + 對眼
+    from collections import Counter as _Counter
+    _counts_hand = _Counter(t // COPIES for t in hand_all)
     if p.chi_count == 0:
-        from collections import Counter as _Counter
-        counts = _Counter(t // COPIES for t in hand_all)
-        pairs_in_hand = sum(1 for c in counts.values() if c % 3 == 2)
-        all_valid = all(c % 3 in (0, 2) for c in counts.values())
+        pairs_in_hand = sum(1 for c in _counts_hand.values() if c % 3 == 2)
+        all_valid = all(c % 3 in (0, 2) for c in _counts_hand.values())
         if pairs_in_hand == 1 and all_valid:
             result.append(("碰碰胡", 4))
+
+    # 三暗刻 / 四暗刻：手牌中同種牌出現 ≥3 張的種類數（暗刻候選）
+    concealed_pungs = sum(1 for c in _counts_hand.values() if c >= 3)
+    if concealed_pungs >= 4 and not has_meld:
+        result.append(("四暗刻", 5))
+    elif concealed_pungs >= 3:
+        result.append(("三暗刻", 2))
 
     return result
 

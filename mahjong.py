@@ -1634,6 +1634,18 @@ def score_hand(
     if wait_kinds == 1:
         result.append(("獨聽", 1))
 
+    # 平胡：ron + 無字花 + 全順子（無明刻/暗刻/槓子）+ 兩面聽（≥2 種聽牌）
+    if (
+        not is_tsumo
+        and not has_honor
+        and not p.bonus
+        and p.pon_count == 0
+        and p.kong_count == 0
+        and not any(c >= 3 for c in _counts_hand.values())
+        and wait_kinds >= 2
+    ):
+        result.append(("平胡", 2))
+
     return result
 
 

@@ -1450,6 +1450,7 @@ def score_hand(
     is_rob_kong: bool = False,
     is_kong_flower: bool = False,
     is_last_tile: bool = False,
+    is_first_round: bool = False,
 ) -> list[tuple[str, int]]:
     """計算胡牌台數明細。
 
@@ -1465,6 +1466,7 @@ def score_hand(
         is_rob_kong:    True = 搶槓胡，額外 +1 台
         is_kong_flower: True = 槓上開花（補花/加槓補牌後自摸），額外 +1 台
         is_last_tile:   True = 牌堆最後一張牌（自摸→海底撈月+1；放槍→河底撈魚+1）
+        is_first_round: True = 首巡胡牌（天胡/地胡/人胡+16，分別過濾不求/自摸/門清）
 
     Returns:
         (規則名稱, 台數) 的列表，台數均為正整數。
@@ -1651,6 +1653,21 @@ def score_hand(
     if not is_tsumo and len(p.hand) == 1:
         result.append(("全求", 2))
 
+    # 天胡 / 地胡 / 人胡：首巡胡牌，清 16 台（移除被取代的基礎台數項目）
+    if is_first_round and not has_meld:
+        if is_tsumo and winner == dealer_idx:
+            # 天胡：莊家首巡自摸，不計不求（= 門清+自摸）
+            result = [r for r in result if r[0] not in ("不求", "門清")]
+            result.append(("天胡", 16))
+        elif is_tsumo:
+            # 地胡：閒家首巡自摸，不計不求/自摸
+            result = [r for r in result if r[0] not in ("不求", "門清", "自摸")]
+            result.append(("地胡", 16))
+        else:
+            # 人胡：首巡放槍胡，不計門清
+            result = [r for r in result if r[0] != "門清"]
+            result.append(("人胡", 16))
+
     return result
 
 
@@ -1712,6 +1729,8 @@ def main(
     skip_draw = True    # 莊家首輪跳過摸牌，直接出牌
     after_supplement = False  # 是否為補花/加槓後補摸（跨回合保持，用於槓上開花判定）
     last_tile_drawn = False   # 是否剛摸完牌堆最後一張（用於海底撈月/河底撈魚判定）
+    first_round = True        # 首巡旗標（用於天胡/地胡/人胡判定）
+    first_turns_done: set[int] = set()  # 已完成首次棄牌的玩家集合
     while m.remain:
         p = m.players[player]
         ai = m.ai[player]
@@ -1738,7 +1757,7 @@ def main(
                     ans = input(f"\n自摸胡！宣胡？(y/n) ").strip().lower()
                     if ans == "y":
                         print(f"\n{player}自摸胡 {n_to_chinese(drawn)}")
-                        _score = score_hand(player, dealer_idx, consecutive, True, p, drawn, game_wind, seat_winds, is_kong_flower=after_supplement, is_last_tile=last_tile_drawn)
+                        _score = score_hand(player, dealer_idx, consecutive, True, p, drawn, game_wind, seat_winds, is_kong_flower=after_supplement, is_last_tile=last_tile_drawn, is_first_round=first_round)
                         _total = sum(v for _, v in _score)
                         _detail = " ".join(f"{n}+{v}" for n, v in _score)
                         print(f"台數明細：{_detail} = 共 {_total} 台")
@@ -1748,7 +1767,7 @@ def main(
                     for t in p.hand[:-1]:
                         print(f" {n_to_chinese(t)}", end="")
                     print()
-                    _score = score_hand(player, dealer_idx, consecutive, True, p, drawn, game_wind, seat_winds, is_kong_flower=after_supplement, is_last_tile=last_tile_drawn)
+                    _score = score_hand(player, dealer_idx, consecutive, True, p, drawn, game_wind, seat_winds, is_kong_flower=after_supplement, is_last_tile=last_tile_drawn, is_first_round=first_round)
                     _total = sum(v for _, v in _score)
                     _detail = " ".join(f"{n}+{v}" for n, v in _score)
                     print(f"台數明細：{_detail} = 共 {_total} 台")
@@ -1820,6 +1839,19 @@ def main(
                         continue
         else:
             # 吃/碰牌輪次：跳過摸牌，直接進入出牌
+            # 天胡：莊家首巡（尚未出牌、無副露），嘗試所有閉門牌作為胡牌
+            if first_round and player == dealer_idx and not (p.chi_count + p.pon_count + p.kong_count):
+                for _i, _t in enumerate(p.hand):
+                    if _t < BONUS_START and is_win_ext(p.hand[:_i] + p.hand[_i + 1:], _t, 0):
+                        print(f"\n{player}天胡 {n_to_chinese(_t)}")
+                        for t in p.hand:
+                            print(f" {n_to_chinese(t)}", end="")
+                        print()
+                        _score = score_hand(player, dealer_idx, consecutive, True, p, _t, game_wind, seat_winds, is_first_round=True)
+                        _total = sum(v for _, v in _score)
+                        _detail = " ".join(f"{n}+{v}" for n, v in _score)
+                        print(f"台數明細：{_detail} = 共 {_total} 台")
+                        return player, dealer_idx
             skip_draw = False
             print(f"\n{player}出牌", end="")
 
@@ -1877,6 +1909,12 @@ def main(
         for other in range(1, 4):
             m.players[(player + other) % 4].add_seen(discard_tile)
 
+        # 首巡追蹤：各玩家完成首次棄牌後標記；全員完成則結束首巡
+        if first_round:
+            first_turns_done.add(player)
+            if len(first_turns_done) >= 4:
+                first_round = False
+
         # 放槍判定：棄牌後立即掃描其他三家
         for offset in range(1, 4):
             cand_idx = (player + offset) % 4
@@ -1891,7 +1929,7 @@ def main(
                 )
                 _cp = m.players[cand_idx]
                 _cp.hand.append(discard_tile)   # 暫加入以便 score_hand 分析
-                _score = score_hand(cand_idx, dealer_idx, consecutive, False, _cp, discard_tile, game_wind, seat_winds, is_last_tile=last_tile_drawn)
+                _score = score_hand(cand_idx, dealer_idx, consecutive, False, _cp, discard_tile, game_wind, seat_winds, is_last_tile=last_tile_drawn, is_first_round=first_round)
                 _cp.hand.pop()                  # 還原
                 _total = sum(v for _, v in _score)
                 _detail = " ".join(f"{n}+{v}" for n, v in _score)
@@ -1926,6 +1964,7 @@ def main(
                 )
                 if PAUSE_ON_MELD and cand_idx != HUMAN_PLAYER:
                     input("  [槓] 按 y + Enter 繼續: ")
+                first_round = False  # 槓牌後首巡失效
                 # 槓後正常摸牌（不設 skip_draw），玩家順序改為槓牌家
                 player = cand_idx
                 kong_player = cand_idx
@@ -1955,6 +1994,7 @@ def main(
                     )
                     if PAUSE_ON_MELD and cand_idx != HUMAN_PLAYER:
                         input("  [碰] 按 y + Enter 繼續: ")
+                    first_round = False  # 碰牌後首巡失效
                     skip_draw = True
                     player = cand_idx
                     pon_player = cand_idx
@@ -2022,6 +2062,7 @@ def main(
                     )
                     if PAUSE_ON_MELD and next_idx != HUMAN_PLAYER:
                         input("  [吃] 按 y + Enter 繼續: ")
+                    first_round = False  # 吃牌後首巡失效
                     skip_draw = True
                     player = next_idx
                 else:

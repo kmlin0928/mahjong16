@@ -1447,18 +1447,20 @@ def score_hand(
     winning_tile: int,
     game_wind: str,
     seat_winds: list[str],
+    is_rob_kong: bool = False,
 ) -> list[tuple[str, int]]:
     """計算胡牌台數明細。
 
     Args:
-        winner:       胡牌玩家索引
-        dealer_idx:   本局莊家索引
-        consecutive:  連莊次數（0 = 首局）
-        is_tsumo:     True = 自摸胡；False = 放槍胡
-        p:            胡牌玩家的 PlayerState（hand 含摸入的完整手牌）
-        winning_tile: 胡牌的那張牌
-        game_wind:    局風字串（"東"/"南"/"西"/"北"）
-        seat_winds:   四家門風列表（seat_winds[winner] = 自風）
+        winner:        胡牌玩家索引
+        dealer_idx:    本局莊家索引
+        consecutive:   連莊次數（0 = 首局）
+        is_tsumo:      True = 自摸胡；False = 放槍胡
+        p:             胡牌玩家的 PlayerState（hand 含摸入的完整手牌）
+        winning_tile:  胡牌的那張牌
+        game_wind:     局風字串（"東"/"南"/"西"/"北"）
+        seat_winds:    四家門風列表（seat_winds[winner] = 自風）
+        is_rob_kong:   True = 搶槓胡，額外 +1 台
 
     Returns:
         (規則名稱, 台數) 的列表，台數均為正整數。
@@ -1467,6 +1469,8 @@ def score_hand(
     seat_wind = seat_winds[winner]
 
     # --- 基礎台數 ---
+    if is_rob_kong:
+        result.append(("搶槓", 1))
     if winner == dealer_idx:
         result.append(("莊家", 1))
     if consecutive >= 1:

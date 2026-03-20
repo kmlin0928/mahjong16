@@ -21,13 +21,14 @@
     只有花槓時不觸發
 - **9f83d19** feat(mahjong-py): 實作八仙過海 +8 台（8 張花牌全收）
 
-### 2. [/] 更新 score_hand() docstring
+### 2. [v] 更新 score_hand() docstring
 
 - **檔案範圍**：`mahjong.py`（`score_hand()` docstring）
 - **摘要**：在花牌相關說明中補充八仙過海條件（8 花全收額外 +8 台）
 - **驗收**：docstring 說明八仙過海觸發條件
+- **bd26282** docs(mahjong-py): score_hand docstring 補充八仙過海說明
 
-### 3. [ ] README.md 胡牌台數表格新增八仙過海
+### 3. [/] README.md 胡牌台數表格新增八仙過海
 
 - **檔案範圍**：`README.md`（「## 胡牌台數」表格）
 - **摘要**：在花槓行附近補上「八仙過海 | +8 | 全部 8 張花牌均已收入」

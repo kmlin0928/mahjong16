@@ -1582,6 +1582,20 @@ def score_hand(
     elif _dragon_pungs == DRAGON_COUNT - 1 and _dragon_pairs >= 1:
         result.append(("小三元", 4))
 
+    # 大四喜 / 小四喜：統計四風（東/南/西/北）在全局手牌（含明牌）的數量
+    _wind_pungs = sum(
+        1 for k in range(SUITED_KINDS, SUITED_KINDS + WIND_KINDS)
+        if _counts_all[k] >= 3
+    )
+    _wind_pairs = sum(
+        1 for k in range(SUITED_KINDS, SUITED_KINDS + WIND_KINDS)
+        if _counts_all[k] == 2
+    )
+    if _wind_pungs == WIND_KINDS:
+        result.append(("大四喜", 13))
+    elif _wind_pungs == WIND_KINDS - 1 and _wind_pairs >= 1:
+        result.append(("小四喜", 6))
+
     return result
 
 

@@ -1445,11 +1445,17 @@ def main() -> None:
         label = "  ".join(parts)
         print(f"  座位{i} {w}  {label}" if label else f"  座位{i} {w}")
 
+    # 莊家補花前多摸一張（開打時手牌共 17 張）
+    dealer_p = m.players[dealer_idx]
+    dealer_extra = m.deal_one()
+    dealer_p.hand.append(dealer_extra)
+    print(f"\n莊家（座位{dealer_idx}）多摸 {n_to_chinese(dealer_extra)}")
+
     m.show_bonus()
     print()
 
-    player = 0
-    skip_draw = False   # 吃牌後下一輪跳過摸牌
+    player = dealer_idx
+    skip_draw = True    # 莊家首輪跳過摸牌，直接出牌
     while m.remain:
         p = m.players[player]
         ai = m.ai[player]

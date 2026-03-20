@@ -1650,6 +1650,66 @@ def main(
             # 牌堆若已空（補花後耗盡），宣告和局
             if not m.remain:
                 break
+
+            # 加槓判定：摸入的牌可補入已碰刻子
+            add_meld_idx = can_add_to_pon(drawn, p.melds)
+            if add_meld_idx is not None:
+                do_add = False
+                if player == HUMAN_PLAYER:
+                    ans = input(
+                        f"\n  你可以加槓 {n_to_chinese(drawn)}？(y/n) "
+                    ).strip().lower()
+                    do_add = ans == "y"
+                elif AI_AUTO_KONG:
+                    do_add = True
+
+                if do_add:
+                    p.melds[add_meld_idx].append(drawn)
+                    p.hand.remove(drawn)
+                    p.kong_count += 1
+                    print(f"\n  {player}加槓 {n_to_chinese(drawn)}", end="")
+
+                    # 搶槓掃描：其他三家是否可胡
+                    robbed = False
+                    for offset in range(1, 4):
+                        rob_idx = (player + offset) % 4
+                        rob_p = m.players[rob_idx]
+                        if is_win_ext(
+                            rob_p.hand,
+                            drawn,
+                            rob_p.chi_count + rob_p.pon_count + rob_p.kong_count,
+                        ):
+                            do_rob = True
+                            if rob_idx == HUMAN_PLAYER:
+                                ans2 = input(
+                                    f"\n  你可以搶槓胡 {n_to_chinese(drawn)}？(y/n) "
+                                ).strip().lower()
+                                do_rob = ans2 == "y"
+                            if do_rob:
+                                print(
+                                    f"\n  {rob_idx}搶槓胡！（{player} 加槓 {n_to_chinese(drawn)}）"
+                                )
+                                rob_p.hand.append(drawn)
+                                _score = score_hand(
+                                    rob_idx, dealer_idx, consecutive,
+                                    False, rob_p, drawn,
+                                    game_wind, seat_winds, is_rob_kong=True,
+                                )
+                                rob_p.hand.pop()
+                                _total = sum(v for _, v in _score)
+                                _detail = " ".join(f"{n}+{v}" for n, v in _score)
+                                print(f"台數明細：{_detail} = 共 {_total} 台")
+                                robbed = True
+                                return rob_idx, dealer_idx
+                    if not robbed:
+                        # 無搶槓，補摸一張後繼續本輪出牌（skip_draw=True 跳過下次摸牌）
+                        if m.remain:
+                            extra = m.deal_one()
+                            p.hand.append(extra)
+                            m._draw_bonus(p, len(p.hand) - 1)
+                            print(f" 補摸 {n_to_chinese(p.hand[-1])}", end="")
+                        skip_draw = True
+                        continue
         else:
             # 吃/碰牌輪次：跳過摸牌，直接進入出牌
             skip_draw = False

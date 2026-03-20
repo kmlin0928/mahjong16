@@ -27,7 +27,7 @@
 - **驗收**：contest_mode=True 時，AI 的初始手牌不顯示
 - **0066704** feat(mahjong-py): 競賽模式隱藏 AI 初始手牌（show_bonus 階段）
 
-### 3. [/] 隱藏 AI 摸牌名稱、剩餘手牌、胡牌手牌
+### 3. [v] 隱藏 AI 摸牌名稱、剩餘手牌、胡牌手牌
 
 - **檔案範圍**：`mahjong.py`（`main()` 主迴圈中 4 處 print 位置）
 - **摘要**：
@@ -35,6 +35,7 @@
   - 棄牌後手牌：AI 的 `for t in p.hand` 迴圈用 `if not contest_mode` 包覆
   - AI 胡牌手牌：同上，用條件包覆
 - **驗收**：contest_mode=True 時，AI 摸牌名稱、剩餘手牌、胡牌手牌均不顯示
+- **8fc596d** feat(mahjong-py): 競賽模式隱藏 AI 摸牌名稱、剩餘手牌、胡牌手牌
 
 ---
 

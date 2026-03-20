@@ -1431,7 +1431,8 @@ def main() -> None:
     m.init_deal()
 
     # 隨機分配門風（東南西北）
-    seat_winds = _random.sample(_SEAT_WIND_NAMES, 4)
+    start = _random.randint(0, 3)
+    seat_winds = [_SEAT_WIND_NAMES[(start + i) % 4] for i in range(4)]
     human_wind = seat_winds[HUMAN_PLAYER]
     print(f"\n【你是 {human_wind}（座位 {HUMAN_PLAYER}）】")
     for i, w in enumerate(seat_winds):

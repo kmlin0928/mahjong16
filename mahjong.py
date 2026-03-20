@@ -1901,10 +1901,11 @@ def main(
         # 人類玩家：顯示三家棄牌與標號手牌，互動選牌
         if player == HUMAN_PLAYER:
             print()
-            for i in range(1, 4):
+            for i in range(4):
                 opp = (player + i) % 4
+                you_mark = "(你)" if opp == HUMAN_PLAYER else ""
                 opp_discards = " ".join(n_to_chinese(t) for t in m.players[opp].discards)
-                print(f"  P{opp} 棄: {opp_discards}")
+                print(f"  P{opp}{you_mark} 棄: {opp_discards}")
             print("  你的手牌：")
             hand_display = "  " + "  ".join(
                 f"[{idx}]{n_to_chinese(t)}" for idx, t in enumerate(p.hand)

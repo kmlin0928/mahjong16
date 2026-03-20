@@ -1534,6 +1534,10 @@ def score_hand(
     if plant_set.issubset(bonus_set):
         result.append(("花槓(梅蘭竹菊)", 2))
 
+    # 八仙過海：全部 8 張花牌均已收入（春夏秋冬梅蘭竹菊）
+    if len(bonus_set) == BONUS_COUNT:
+        result.append(("八仙過海", 8))
+
     # --- 手型台數 ---
     # 收集全部非花牌（melds + hand，ron 時補入 winning_tile）
     hand_all = list(p.hand)

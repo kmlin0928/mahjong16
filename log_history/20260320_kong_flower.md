@@ -8,7 +8,7 @@
 
 ## 任務清單
 
-### 1. [/] 追蹤補牌旗標並傳入 score_hand()
+### 1. [v] 追蹤補牌旗標並傳入 score_hand()
 
 - **檔案範圍**：`mahjong.py`（`main()` 摸牌段落、加槓段落；`score_hand()` 函式簽名）
 - **摘要**：
@@ -19,6 +19,7 @@
     若 True 則 `result.append(("槓上開花", 1))`
   - 自摸胡呼叫 `score_hand()` 時，傳入 `is_kong_flower=after_supplement`
 - **驗收**：摸到花牌補牌後自摸胡，台數明細出現「槓上開花+1」
+- **4cd2bc4** feat(mahjong-py): 實作槓上開花 — 補花/加槓補牌後自摸胡加 +1 台
 
 ---
 

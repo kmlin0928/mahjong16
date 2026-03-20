@@ -8,15 +8,16 @@
 
 ## 任務清單
 
-### 1. [/] 詢問競賽模式並傳入 main()
+### 1. [v] 詢問競賽模式並傳入 main()
 
 - **檔案範圍**：`mahjong.py`（`__main__` 連莊迴圈前 + `main()` 簽名）
 - **摘要**：
   - `__main__` 在連莊迴圈前詢問：「是否隱藏 AI 手牌？(y/n)」
   - `main()` 新增 `contest_mode: bool = False` 參數，連莊迴圈傳入
 - **驗收**：選 y 時 contest_mode=True 傳入 main()
+- **d3b67a0** feat(mahjong-py): 新增競賽模式詢問並傳入 main()
 
-### 2. [ ] 隱藏 AI 初始手牌（show_bonus 階段）
+### 2. [/] 隱藏 AI 初始手牌（show_bonus 階段）
 
 - **檔案範圍**：`mahjong.py`（`m.show_bonus()` 呼叫改為內聯迴圈）
 - **摘要**：

@@ -1755,7 +1755,23 @@ def main(
     dealer_p.hand.append(dealer_extra)
     print(f"\n莊家（座位{dealer_idx}）多摸 {n_to_chinese(dealer_extra)}")
 
-    m.show_bonus()
+    # 補花並顯示初始手牌（contest_mode 時隱藏 AI 手牌）
+    import contextlib as _cl, io as _io
+    for _pi in range(4):
+        _pp = m.players[_pi]
+        if contest_mode and _pi != HUMAN_PLAYER:
+            with _cl.redirect_stdout(_io.StringIO()):
+                print(f"\n{_pi}", end="")
+                for _i in range(_pp.n_hand):
+                    print(f" {n_to_chinese(_pp.hand[_i])}", end="")
+                    m._draw_bonus(_pp, _i)
+        else:
+            print(f"\n{_pi}", end="")
+            for _i in range(_pp.n_hand):
+                print(f" {n_to_chinese(_pp.hand[_i])}", end="")
+                m._draw_bonus(_pp, _i)
+        for _t in _pp.hand:
+            _pp.add_seen(_t)
     print()
 
     # 天聽偵測：補花完成後立即掃描各家是否已聽

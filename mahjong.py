@@ -1502,7 +1502,7 @@ def score_hand(
     if winner == dealer_idx:
         result.append(("莊家", 1))
     if consecutive >= 1:
-        result.append(("拉莊", consecutive))
+        result.append(("拉莊", consecutive * 2))
 
     has_meld = (p.chi_count + p.pon_count + p.kong_count) > 0
 

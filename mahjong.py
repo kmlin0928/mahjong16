@@ -2777,6 +2777,32 @@ if __name__ == "__main__":
         assert len(_state.discards) == 4, f"discards 應有 4 家：{len(_state.discards)}"
         print(f"  ✓ GameSession 完整執行（{_elapsed2:.2f}s），{_steps} 步，winner={_state.winner!r}")
 
+        print("\n--- 單元測試：拉莊台數公式 ---")
+        # 最簡胡牌手牌：5 組刻子（1–5筒各3張）+ 1萬對子 = 17 張
+        # tile encoding: 1筒=0~3, 2筒=4~7, 3筒=8~11, 4筒=12~15, 5筒=16~19, 1萬=72~75
+        _win_hand = [0,1,2, 4,5,6, 8,9,10, 12,13,14, 16,17,18, 72,73]
+        _win_tile = 73  # 自摸入牌（在 hand 中）
+        _seat_winds = list(_SEAT_WIND_NAMES)  # ['東','南','西','北']
+        _win_p = PlayerState(n_hand=16, hand=_win_hand)
+        for _consec, _expected_laz in [(0, 0), (1, 2), (2, 4), (3, 6)]:
+            _sc = score_hand(
+                winner=0, dealer_idx=0, consecutive=_consec,
+                is_tsumo=True, p=_win_p, winning_tile=_win_tile,
+                game_wind=_seat_winds[0], seat_winds=_seat_winds,
+            )
+            _laz_pts = next((v for n, v in _sc if n == "拉莊"), 0)
+            assert _laz_pts == _expected_laz, (
+                f"連莊{_consec} 拉莊應={_expected_laz} 實得={_laz_pts}"
+            )
+            _dealer_pts = next((v for n, v in _sc if n == "莊家"), 0)
+            assert _dealer_pts == 1, f"莊家台應=1 實得={_dealer_pts}"
+            _total = sum(v for _, v in _sc)
+            _expected_base = 1 + _expected_laz  # 莊家+拉莊（最低）
+            assert _total >= _expected_base, (
+                f"連莊{_consec} 總台數應≥{_expected_base} 實得={_total}"
+            )
+            print(f"  ✓ 連莊{_consec}：莊家+{_dealer_pts} 拉莊+{_laz_pts}（總{_total}台）")
+
         print("\n  ✓ 所有整合測試通過")
 
     # ── 模式選單 / 自動偵測 ──────────────────────────────────────────

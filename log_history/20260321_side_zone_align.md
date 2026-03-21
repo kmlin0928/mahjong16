@@ -6,7 +6,8 @@
 ## 任務清單
 
 ### Task 1：style.css — 左右區塊改為靠上對齊並加 padding-top
-- [/] 檔案範圍：`static/style.css`
+- [v] 檔案範圍：`static/style.css`
+- Commit 893745e：fix(style): 左右側玩家區塊靠上對齊，避免棄牌行被截斷
 - 摘要：
   新增 `#zone-left, #zone-right` 的 CSS 覆寫：
   `justify-content: flex-start; padding-top: 8%;`

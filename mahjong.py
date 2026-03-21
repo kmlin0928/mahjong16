@@ -2948,39 +2948,6 @@ if __name__ == "__main__":
         print("\n  ✓ 所有整合測試通過")
 
     # ── 模式選單 / 自動偵測 ──────────────────────────────────────────
-    import sys as _sys, subprocess as _sp, webbrowser as _wb, time as _wt, os as _os
-
-    def _launch_web() -> None:
-        """啟動 FastAPI 網頁伺服器並開啟瀏覽器。"""
-        _srv = _os.path.join(_os.path.dirname(__file__), "web_mahjong.py")
-        if not _os.path.exists(_srv):
-            print("網頁伺服器尚未建立（web_mahjong.py 不存在，請完成任務 4–7）")
-            return
-        print("啟動網頁伺服器 http://localhost:8000 ...")
-        _proc = _sp.Popen(["uvicorn", "web_mahjong:app", "--reload", "--host", "127.0.0.1", "--port", "8000"])
-        _wt.sleep(1.5)
-        _wb.open("http://localhost:8000")
-        try:
-            _proc.wait()
-        except KeyboardInterrupt:
-            _proc.terminate()
-
-    if _sys.stdin.isatty():
-        # 互動式指令列 → 顯示左右鍵選單
-        import readchar as _rc
-        print("\n選擇模式：← 指令模式　→ 網頁模式 ", end="", flush=True)
-        _key = _rc.readkey()
-        print()
-        if _key == _rc.key.RIGHT:
-            _launch_web()
-            import sys; sys.exit(0)
-    else:
-        # 非互動式（web server、process manager 等）→ 自動進入網頁模式
-        print("非互動式環境，自動進入網頁模式...")
-        _launch_web()
-        import sys; sys.exit(0)
-
-    # ── 指令模式（到這裡必為 isatty=True 且按了左鍵）────────────────
     _ans = input("是否隱藏 AI 手牌（競賽模式）？(y/n) ").strip().lower()
     contest = _ans == "y"
 

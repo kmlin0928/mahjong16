@@ -75,13 +75,47 @@ go run .      # 執行（全 AI 自動對局）
 go build .    # 編譯為執行檔
 ```
 
-### Python 版本
+### Python 版本（終端機模式）
 
 需安裝 [uv](https://github.com/astral-sh/uv)：
 
 ```bash
 uv run mahjong.py   # 執行（含單元驗收測試 + 完整對局）
 ```
+
+### Python 版本（網頁模式）
+
+啟動 FastAPI + WebSocket 網頁伺服器，以瀏覽器操作對局：
+
+```bash
+uv run --with fastapi --with "uvicorn[standard]" \
+    uvicorn web_mahjong:app --reload
+```
+
+預設監聽 `http://127.0.0.1:8000`。開啟瀏覽器後點「開始對局」即可進行人機對戰（你扮演東家，其餘三家為 AI）。
+
+**網頁版功能：**
+
+| 功能 | 說明 |
+|------|------|
+| 四方位牌桌 | 上（對家）、左（上家）、右（下家）、下（你）各區獨立顯示手牌、副露、棄牌 |
+| Unicode 麻將符號 | 42 種牌面各對應 Unicode 符號（U+1F000–U+1F02B），搭配中文牌名雙行顯示 |
+| 風圈門風 | 左上角八角形徽章即時顯示圈風（遊戲風）與門風（你的座位風） |
+| 花牌區 | 各方位花牌補進後即時顯示於花牌列 |
+| 牌堆剩餘 | 中央顯示剩餘張數，≤10 張時紅字閃爍提示 |
+| 副露提示卡 | 可吃、可碰、可槓、可胡時彈出提示卡，支援「接受 / 跳過」選擇 |
+| 連莊機制 | 莊家胡牌或和局時顯示「連莊！」按鈕；非莊胡牌時僅顯示「新局」 |
+| 事件記錄 | 即時 WebSocket 串流每步棋的日誌，最新訊息顯示於最上方 |
+| 手機響應式 | ≤600px 螢幕自動隱藏對手手牌背面、縮排按鈕、提供記錄收合切換 |
+
+**Playwright 端到端驗收測試：**
+
+```bash
+uv run --with playwright --with fastapi --with "uvicorn[standard]" \
+    python test_playwright.py
+```
+
+自動啟動伺服器，以 Headless Chromium 瀏覽器打完一局，截圖存於 `screenshot_gameover.png`。
 
 ---
 
@@ -333,7 +367,8 @@ findPair / find_pair  ──→  suited[]（數牌分佈）
 
 ## 限制與注意事項
 
-- 純自動對局，不支援手動輸入（Go 版可將 `playAI` 改為 `playManual`）
-- 不支援槓
-- 不計算番數或積分
+- **Go 版**：純自動 AI 對局，不支援手動輸入（可將 `client.go` 中 `playAI` 改為 `playManual`）；不支援槓牌
+- **Python 終端機版**：純自動 AI 對局，不支援互動輸入
+- **Python 網頁版**：支援人機對戰（你為東家，其餘三家 AI）；支援吃／碰／槓／胡提示
+- 不計算番數或積分（台數僅供顯示，不影響積分累計）
 - 每次執行結果隨機

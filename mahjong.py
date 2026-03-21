@@ -1801,6 +1801,7 @@ class GameSession:
         contest: bool = True,
         dealer_idx_override: int | None = None,
         consecutive: int = 0,
+        seat_winds: list[str] | None = None,
     ) -> None:
         """初始化 GameSession。
 
@@ -1808,10 +1809,12 @@ class GameSession:
             contest:             競賽模式，AI 手牌不顯示牌名
             dealer_idx_override: 指定莊家（連莊時傳入）
             consecutive:         連莊次數
+            seat_winds:          指定座次門風列表；None 時隨機抽定
         """
         self.contest = contest
         self.dealer_idx_override = dealer_idx_override
         self.consecutive = consecutive
+        self.seat_winds_override = seat_winds
         self._gen: object = None
         self._log: list[str] = []
         self._game_wind: str = ""
@@ -1934,8 +1937,11 @@ class GameSession:
         m.init_deal()
         self._log.clear()
 
-        # 分配門風（固定順序：玩家 0=東、1=南、2=西、3=北）
-        seat_winds = list(_SEAT_WIND_NAMES)
+        # 分配門風：連莊沿用上局座次，新局隨機抽定
+        if self.seat_winds_override is not None:
+            seat_winds = list(self.seat_winds_override)
+        else:
+            seat_winds = _rnd.sample(_SEAT_WIND_NAMES, len(_SEAT_WIND_NAMES))
         plabel = lambda p: player_label(p, seat_winds)  # noqa: E731
         human_wind = seat_winds[HUMAN_PLAYER]
         if self.dealer_idx_override is not None:

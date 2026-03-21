@@ -13,7 +13,8 @@
   - 摘要：將 `("拉莊", consecutive)` 改為 `("拉莊", consecutive * 2)`
   - 驗收：連莊0→莊家1台、連莊1→莊家1+拉莊2=3台、連莊2→莊家1+拉莊4=5台
 
-- [/] Task 3：__main__ 驗收測試
+- [v] Task 3：__main__ 驗收測試
+  - Commit 2f9bd39：test(score): 新增拉莊台數公式驗收測試
   - 檔案：mahjong.py（__main__）
   - 摘要：新增 score_hand 拉莊台數的直接測試案例，驗收三種連莊次數
 

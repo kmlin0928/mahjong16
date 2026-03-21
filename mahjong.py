@@ -1965,6 +1965,10 @@ class GameSession:
         human_wind = seat_winds[HUMAN_PLAYER]
         if self.dealer_idx_override is not None:
             dealer_idx = self.dealer_idx_override
+        elif self.consecutive > 0:
+            raise RuntimeError(
+                "連莊時必須提供 dealer_idx_override，無法隨機指定新莊家"
+            )
         else:
             dealer_idx = _random.randrange(4)  # 首局隨機選莊
         game_wind = seat_winds[dealer_idx]  # 局風 = 莊家門風

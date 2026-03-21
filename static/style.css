@@ -438,6 +438,15 @@ body {
 #log-box::-webkit-scrollbar-track { background: transparent; }
 #log-box::-webkit-scrollbar-thumb { background: #5c3a00; border-radius: 2px; }
 
+/* ── 花牌列（bonus-row） ── */
+.bonus-row {
+  min-height: 0;
+  gap: 2px;
+  opacity: 0.9;
+}
+
+.bonus-row:empty { display: none; }
+
 /* ── Log 收合按鈕 ── */
 #log-toggle {
   width: 100%;

@@ -1,0 +1,39 @@
+# 任務：麻將網頁版 Phase 3 — 功能補全與 Playwright 驗收
+
+## 缺口分析
+- GameState.bonus 已有四家花牌資料，但前端完全未渲染
+- GameState 無剩餘牌數欄位，玩家無法判斷接近牌局尾聲
+- Playwright 端到端驗收未做（需真實瀏覽器跑完整局）
+
+## 任務清單
+
+### 1. [v] 花牌區顯示（bonus tiles）
+- 檔案：`static/app.js`、`static/index.html`、`static/style.css`
+- 摘要：
+  - 各方位區塊加入花牌列（`bonus` 欄位）
+  - 你的花牌顯示在手牌上方，AI 花牌顯示在對應方位
+  - 花牌以綠底牌片呈現，與棄牌尺寸相同
+
+### 2. [ ] 剩餘牌數顯示
+- 檔案：`mahjong.py`（GameState 加 `deck_remaining: int`）、`static/app.js`、`static/style.css`
+- 摘要：
+  - `_snapshot()` 加入 `len(m.remain)` 作為剩餘牌數
+  - 前端中央區顯示「剩 N 張」，牌數 ≤ 10 時變紅色警示
+
+### 3. [ ] Playwright 端到端驗收（打完一局）
+- 檔案：`test_playwright.py`（新建）
+- 摘要：
+  - 啟動 uvicorn server（subprocess），Playwright headless Chromium 開啟頁面
+  - 點擊「開始對局」，迴圈：若有提示卡片按「跳過」，否則點第一張手牌出牌
+  - 等待 `#gameover-banner` 出現，截圖並驗收 winner 文字
+  - 完成後關閉 server
+
+## 驗收條件
+- 任務 1：各方位花牌以綠底顯示，與 GameState.bonus 資料一致
+- 任務 2：中央顯示剩餘張數，≤10 張時文字變紅
+- 任務 3：`uv run --with playwright --with fastapi --with "uvicorn[standard]" test_playwright.py` 輸出「✓ 一局完整驗收通過」並留存截圖
+
+## 狀態更新規則
+- `[ ]` 未開始
+- `[/]` 進行中
+- `[v]` 完成

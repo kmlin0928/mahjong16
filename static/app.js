@@ -138,21 +138,27 @@ function updateWindBadge(state) {
 
 // ── 四方位渲染 ───────────────────────────────────────────────
 function renderAllZones(state) {
+  const bonus = state.bonus || [[], [], [], []];
+
   renderHandButtons('bottom-hand', state.your_hand, state.phase === 'human_discard');
   renderTiles('bottom-melds', flatMelds(state.melds[0]));
   renderDiscards('bottom-discards', state.discards[0]);
+  renderDiscards('bottom-bonus', bonus[0]);
 
   renderBackTiles('top-hand', state.hand_counts[2]);
   renderTiles('top-melds', flatMelds(state.melds[2]));
   renderDiscards('top-discards', state.discards[2]);
+  renderDiscards('top-bonus', bonus[2]);
 
   renderBackTiles('left-hand', state.hand_counts[3]);
   renderTiles('left-melds', flatMelds(state.melds[3]));
   renderDiscards('left-discards', state.discards[3]);
+  renderDiscards('left-bonus', bonus[3]);
 
   renderBackTiles('right-hand', state.hand_counts[1]);
   renderTiles('right-melds', flatMelds(state.melds[1]));
   renderDiscards('right-discards', state.discards[1]);
+  renderDiscards('right-bonus', bonus[1]);
 }
 
 function flatMelds(melds) {

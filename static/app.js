@@ -312,7 +312,13 @@ function addBtn(container, label, onclick) {
 }
 
 // ── 事件 log（逐行附加） ──────────────────────────────────────
-const _MELD_KEYWORDS = ['打', '吃', '碰', '槓', '補花'];
+const _LOG_CLASSES = [
+  { key: '補花', cls: 'log-bonus' },
+  { key: '打',   cls: 'log-discard' },
+  { key: '吃',   cls: 'log-chi' },
+  { key: '碰',   cls: 'log-pon' },
+  { key: '槓',   cls: 'log-kong' },
+];
 
 function appendLog(line) {
   const box = document.getElementById('log-box');
@@ -321,9 +327,8 @@ function appendLog(line) {
   const p = document.createElement('p');
   p.textContent = line;
   p.className = 'latest';
-  if (_MELD_KEYWORDS.some(k => line.includes(k))) {
-    p.classList.add('meld-action');
-  }
+  const match = _LOG_CLASSES.find(({ key }) => line.includes(key));
+  if (match) p.classList.add(match.cls);
   box.prepend(p);    // 最新在最上
 }
 

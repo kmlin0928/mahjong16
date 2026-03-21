@@ -361,15 +361,20 @@ body {
 
 #log-box p { margin: 1px 0; line-height: 1.4; }
 #log-box p.latest { color: #f5d060; }
-#log-box p.meld-action {
+#log-box p.log-bonus, #log-box p.log-discard,
+#log-box p.log-chi,   #log-box p.log-pon,   #log-box p.log-kong {
   font-size: 1rem;
   font-weight: 700;
   color: #fff;
-  background: rgba(160, 40, 80, 0.55);
   border-radius: 4px;
   padding: 2px 6px;
   margin: 3px 0;
 }
+#log-box p.log-bonus   { background: rgba(30,120,30,0.55); }
+#log-box p.log-discard { background: rgba(160,30,30,0.55); }
+#log-box p.log-chi     { background: rgba(60,60,60,0.65);  }
+#log-box p.log-pon     { background: rgba(30,60,160,0.55); }
+#log-box p.log-kong    { background: rgba(60,30,140,0.60); }
 
 /* ── 開始覆蓋層 ── */
 #start-overlay {

@@ -2062,7 +2062,7 @@ class GameSession:
                             is_last_tile=last_tile_drawn, is_first_round=first_round,
                             tenhou_label=tenhou_flags.get(player, ""),
                         )
-                        self._L(f"{plabel(player)}自摸胡！")
+                        self._L(f"{plabel(player)}自摸胡 {n_to_chinese(drawn)}！")
                         return self._snapshot(m, "game_over", winner=plabel(player), scores=_sc)
 
                 if not m.remain:
@@ -2475,7 +2475,7 @@ def main(
                         _print_summary()
                         return player, dealer_idx, seat_winds, game_round_wind
                 else:
-                    print(f"\n{plabel(player)}胡", end="")
+                    print(f"\n{plabel(player)}自摸胡 {n_to_chinese(drawn)}", end="")
                     for t in p.hand[:-1]:
                         print(f" {n_to_chinese(t)}", end="")
                     print()

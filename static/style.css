@@ -137,10 +137,17 @@ body {
   text-transform: uppercase;
 }
 
-/* ── 左右側區（上家/下家）往上靠 ── */
-#zone-left, #zone-right {
+/* ── 左側區（上家）往上靠 ── */
+#zone-left {
   justify-content: flex-start;
   padding-top: 8%;
+}
+
+/* ── 右側區（下家）反向排列，棄牌在頂部朝向桌面中央 ── */
+#zone-right {
+  flex-direction: column-reverse;
+  justify-content: flex-start;
+  padding-bottom: 8%;
 }
 
 /* ── 中央區 ── */

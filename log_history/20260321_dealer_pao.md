@@ -14,7 +14,8 @@
   - 摘要：在放槍胡（ron）判定後已知放槍者索引，補上 pao_idx= 引數；
     自摸胡時 pao_idx=None（不加台）
 
-- [/] Task 3：__main__ 驗收測試
+- [v] Task 3：__main__ 驗收測試
+  - Commit f893aaa：test(score): 新增莊家放槍加台驗收測試
   - 檔案：mahjong.py（__main__ RUN_TESTS 區塊）
   - 摘要：新增 score_hand 莊家放槍加台的直接測試案例（pao=莊/非莊）
 

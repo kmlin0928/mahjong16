@@ -2,12 +2,13 @@
 
 ## 任務清單
 
-- [/] Task 1：棄牌加粉紅色背景
+- [v] Task 1：棄牌加粉紅色背景
+  - Commit e494289：style(ui): 棄牌底色改為粉紅色 (#ffd6e7)
   - 檔案：static/style.css（.tile.discard 規則）
   - 摘要：在 .tile.discard 加 background: #ffd6e7（粉紅）；
     覆蓋花牌綠色背景（花牌棄牌也用粉紅）
 
-- [ ] Task 2：吃/碰/槓/補花 log 條目醒目樣式
+- [/] Task 2：吃/碰/槓/補花 log 條目醒目樣式
   - 檔案：static/style.css（新增 p.meld-action）、
     static/app.js（appendLog 偵測關鍵字加 class）
   - 摘要：appendLog 中若訊息含「吃」「碰」「槓」「補花」，

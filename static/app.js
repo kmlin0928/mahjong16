@@ -310,6 +310,8 @@ function addBtn(container, label, onclick) {
 }
 
 // ── 事件 log（逐行附加） ──────────────────────────────────────
+const _MELD_KEYWORDS = ['吃', '碰', '槓', '補花'];
+
 function appendLog(line) {
   const box = document.getElementById('log-box');
   // 移除最新行舊標記
@@ -317,6 +319,9 @@ function appendLog(line) {
   const p = document.createElement('p');
   p.textContent = line;
   p.className = 'latest';
+  if (_MELD_KEYWORDS.some(k => line.includes(k))) {
+    p.classList.add('meld-action');
+  }
   box.prepend(p);    // 最新在最上
 }
 

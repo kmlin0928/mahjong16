@@ -353,6 +353,15 @@ body {
 
 #log-box p { margin: 1px 0; line-height: 1.4; }
 #log-box p.latest { color: #f5d060; }
+#log-box p.meld-action {
+  font-size: 1rem;
+  font-weight: 700;
+  color: #fff;
+  background: rgba(160, 40, 80, 0.55);
+  border-radius: 4px;
+  padding: 2px 6px;
+  margin: 3px 0;
+}
 
 /* ── 開始覆蓋層 ── */
 #start-overlay {

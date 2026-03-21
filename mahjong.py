@@ -2810,6 +2810,45 @@ if __name__ == "__main__":
             )
             print(f"  ✓ 連莊{_consec}：莊家+{_dealer_pts} 拉莊+{_laz_pts}（總{_total}台）")
 
+        print("\n--- 單元測試：莊家放槍加台 ---")
+        # 同一手牌，分三種情境比較台數
+        _pao_hand = list(_win_hand)
+        _pao_p    = PlayerState(n_hand=16, hand=_pao_hand)
+        # 情境 A：莊家放槍（pao_idx=dealer_idx=0）→ 應比 pao=None 多 1 台
+        _sc_pao_dealer = score_hand(
+            winner=1, dealer_idx=0, consecutive=0,
+            is_tsumo=False, p=_pao_p, winning_tile=_win_tile,
+            game_wind=_seat_winds[0], seat_winds=_seat_winds,
+            pao_idx=0,
+        )
+        # 情境 B：非莊放槍（pao_idx=2，非 dealer=0）→ 台數與 pao=None 相同
+        _sc_pao_other = score_hand(
+            winner=1, dealer_idx=0, consecutive=0,
+            is_tsumo=False, p=_pao_p, winning_tile=_win_tile,
+            game_wind=_seat_winds[0], seat_winds=_seat_winds,
+            pao_idx=2,
+        )
+        # 情境 C：自摸（pao_idx=None）→ 不加莊家放槍
+        _sc_tsumo = score_hand(
+            winner=1, dealer_idx=0, consecutive=0,
+            is_tsumo=True, p=_pao_p, winning_tile=_win_tile,
+            game_wind=_seat_winds[0], seat_winds=_seat_winds,
+        )
+        _pao_dealer_pts = next((v for n, v in _sc_pao_dealer if n == "莊家放槍"), 0)
+        _pao_other_pts  = next((v for n, v in _sc_pao_other  if n == "莊家放槍"), 0)
+        _tsumo_pts      = next((v for n, v in _sc_tsumo       if n == "莊家放槍"), 0)
+        assert _pao_dealer_pts == 1, f"莊家放槍應=1 實得={_pao_dealer_pts}"
+        assert _pao_other_pts  == 0, f"非莊放槍莊家放槍應=0 實得={_pao_other_pts}"
+        assert _tsumo_pts      == 0, f"自摸莊家放槍應=0 實得={_tsumo_pts}"
+        _total_a = sum(v for _, v in _sc_pao_dealer)
+        _total_b = sum(v for _, v in _sc_pao_other)
+        assert _total_a == _total_b + 1, (
+            f"莊家放槍應比非莊放槍多1台：{_total_a} vs {_total_b}"
+        )
+        print(f"  ✓ 莊家放槍：+{_pao_dealer_pts} 台（總{_total_a}台）")
+        print(f"  ✓ 非莊放槍：+{_pao_other_pts} 台（總{_total_b}台）")
+        print(f"  ✓ 自摸：莊家放槍 +{_tsumo_pts} 台（不加台）")
+
         print("\n  ✓ 所有整合測試通過")
 
     # ── 模式選單 / 自動偵測 ──────────────────────────────────────────

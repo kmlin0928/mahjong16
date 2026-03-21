@@ -8,12 +8,13 @@
   - 摘要：非自摸（is_tsumo=False）且放槍者為莊家（pao_idx == dealer_idx）時，
     加 ("莊家放槍", 1)；需新增 pao_idx 參數（放槍者索引）
 
-- [/] Task 2：傳入 pao_idx 至所有 score_hand 呼叫處
+- [v] Task 2：傳入 pao_idx 至所有 score_hand 呼叫處
+  - Commit 66f818b：feat(score): 所有放槍胡呼叫點傳入 pao_idx
   - 檔案：mahjong.py（_game_loop 與 main() 中全部 score_hand 呼叫）
   - 摘要：在放槍胡（ron）判定後已知放槍者索引，補上 pao_idx= 引數；
     自摸胡時 pao_idx=None（不加台）
 
-- [ ] Task 3：__main__ 驗收測試
+- [/] Task 3：__main__ 驗收測試
   - 檔案：mahjong.py（__main__ RUN_TESTS 區塊）
   - 摘要：新增 score_hand 莊家放槍加台的直接測試案例（pao=莊/非莊）
 

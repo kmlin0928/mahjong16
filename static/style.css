@@ -127,6 +127,7 @@ body {
   letter-spacing: 0.05em;
   white-space: nowrap;
 }
+.dealer-badge.hidden { display: none; }
 
 .zone-label {
   font-size: 0.62rem;

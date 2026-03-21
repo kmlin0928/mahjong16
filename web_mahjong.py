@@ -110,10 +110,13 @@ async def ws_game(ws: WebSocket) -> None:
                 contest = bool(msg.get("contest", True))
                 dealer_idx_override = msg.get("dealer_idx")  # int or None
                 consecutive = int(msg.get("consecutive", 0))
+                seat_winds_raw = msg.get("seat_winds")       # list[str] or None
+                seat_winds = list(seat_winds_raw) if seat_winds_raw else None
                 session = GameSession(
                     contest=contest,
                     dealer_idx_override=dealer_idx_override,
                     consecutive=consecutive,
+                    seat_winds=seat_winds,
                 )
                 state = await asyncio.to_thread(session.start)
 

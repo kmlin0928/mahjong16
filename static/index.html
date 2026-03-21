@@ -8,7 +8,7 @@
 </head>
 <body>
 
-<!-- 風圈門風（最左上方） -->
+<!-- 風圈門風（左上角八角形） -->
 <div id="wind-badge">
   <div class="wind-game" id="wind-game">東</div>
   <div class="wind-sep">局</div>
@@ -16,25 +16,26 @@
   <div class="wind-sep">門</div>
 </div>
 
-<!-- 四方位牌桌 -->
-<div id="table">
+<!-- 牌桌主體 -->
+<div id="table-wrap">
 
   <!-- 上區：對家 -->
   <div id="zone-top" class="zone">
     <div class="zone-label">對家</div>
     <div class="tile-row" id="top-melds"></div>
     <div class="tile-row" id="top-hand"></div>
-    <div class="tile-row discards" id="top-discards"></div>
+    <div class="tile-row" id="top-discards"></div>
   </div>
 
   <!-- 中排 -->
   <div id="zone-middle">
+
     <!-- 左區：上家 -->
-    <div id="zone-left" class="zone zone-side">
+    <div id="zone-left" class="zone">
       <div class="zone-label">上家</div>
-      <div class="tile-col" id="left-melds"></div>
-      <div class="tile-col" id="left-hand"></div>
-      <div class="tile-col discards" id="left-discards"></div>
+      <div class="tile-row" id="left-melds"></div>
+      <div class="tile-row" id="left-hand"></div>
+      <div class="tile-row" id="left-discards"></div>
     </div>
 
     <!-- 中央：提示 + log -->
@@ -47,17 +48,18 @@
     </div>
 
     <!-- 右區：下家 -->
-    <div id="zone-right" class="zone zone-side">
+    <div id="zone-right" class="zone">
       <div class="zone-label">下家</div>
-      <div class="tile-col" id="right-melds"></div>
-      <div class="tile-col" id="right-hand"></div>
-      <div class="tile-col discards" id="right-discards"></div>
+      <div class="tile-row" id="right-melds"></div>
+      <div class="tile-row" id="right-hand"></div>
+      <div class="tile-row" id="right-discards"></div>
     </div>
+
   </div>
 
   <!-- 下區：你 -->
   <div id="zone-bottom" class="zone">
-    <div class="tile-row discards" id="bottom-discards"></div>
+    <div class="tile-row" id="bottom-discards"></div>
     <div class="tile-row" id="bottom-melds"></div>
     <div class="tile-row hand-buttons" id="bottom-hand"></div>
     <div class="zone-label">你</div>
@@ -65,9 +67,16 @@
 
 </div>
 
-<!-- 開始按鈕（未開局時顯示） -->
+<!-- 開始覆蓋層 -->
 <div id="start-overlay">
   <button id="btn-start" onclick="startGame()">開始對局</button>
+</div>
+
+<!-- 遊戲結束橫幅（JS 動態建立） -->
+<div id="gameover-banner" style="display:none">
+  <h2 id="gameover-title"></h2>
+  <div class="scores" id="gameover-scores"></div>
+  <button onclick="startGame()">再來一局</button>
 </div>
 
 <script src="/static/app.js"></script>

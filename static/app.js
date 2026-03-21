@@ -1,9 +1,21 @@
 /* app.js — 麻將競賽模式前端 */
 
 let _state = null;
-let _waiting = false;  // 避免重複送出
+let _waiting = false;
 
-// ── API 呼叫 ────────────────────────────────────────────────
+// ── 牌面花色判定（用於 data-suit CSS 著色） ─────────────────
+function suitOf(tileName) {
+  if (!tileName) return '';
+  if (tileName.includes('萬')) return 'wan';
+  if (tileName.includes('筒')) return 'tong';
+  if (tileName.includes('索')) return 'suo';
+  if (['東','南','西','北'].some(w => tileName.includes(w))) return 'wind';
+  if (['中','發','白'].some(w => tileName.includes(w))) return 'drag';
+  if (['春','夏','秋','冬','梅','蘭','竹','菊'].some(w => tileName.includes(w))) return 'flower';
+  return '';
+}
+
+// ── API ─────────────────────────────────────────────────────
 async function api(path, params = {}) {
   const url = new URL(path, location.href);
   Object.entries(params).forEach(([k, v]) => url.searchParams.set(k, v));
@@ -19,31 +31,44 @@ async function api(path, params = {}) {
 async function startGame() {
   document.getElementById('start-overlay').style.display = 'none';
   document.getElementById('gameover-banner').style.display = 'none';
-  const state = await api('/new_game', { contest: true });
-  renderState(state);
+  try {
+    const state = await api('/new_game', { contest: true });
+    renderState(state);
+  } catch (e) {
+    alert('開局失敗：' + e.message);
+  }
 }
 
 async function sendDiscard(idx) {
   if (_waiting) return;
   _waiting = true;
   setHandEnabled(false);
-  const state = await api('/discard', { idx });
-  _waiting = false;
-  renderState(state);
+  try {
+    const state = await api('/discard', { idx });
+    renderState(state);
+  } catch (e) {
+    alert('出牌失敗：' + e.message);
+  } finally {
+    _waiting = false;
+  }
 }
 
 async function sendAction(type) {
   if (_waiting) return;
   _waiting = true;
-  const state = await api('/action', { type });
-  _waiting = false;
-  renderState(state);
+  try {
+    const state = await api('/action', { type });
+    renderState(state);
+  } catch (e) {
+    alert('操作失敗：' + e.message);
+  } finally {
+    _waiting = false;
+  }
 }
 
 // ── 渲染主控 ────────────────────────────────────────────────
 function renderState(state) {
   _state = state;
-
   updateWindBadge(state);
   renderAllZones(state);
   renderLog(state.log);
@@ -64,33 +89,26 @@ function renderState(state) {
 
 // ── 風圈門風 ────────────────────────────────────────────────
 function updateWindBadge(state) {
-  const humanSeatWind = (state.seat_winds && state.seat_winds.length > 0)
-    ? state.seat_winds[0]   // HUMAN_PLAYER = 0
-    : '?';
-  const gameWind = state.game_wind || '?';
-  document.getElementById('wind-game').textContent = gameWind;
-  document.getElementById('wind-seat').textContent = humanSeatWind;
+  const human = (state.seat_winds && state.seat_winds.length > 0) ? state.seat_winds[0] : '?';
+  document.getElementById('wind-game').textContent = state.game_wind || '?';
+  document.getElementById('wind-seat').textContent = human;
 }
 
 // ── 四方位渲染 ───────────────────────────────────────────────
-// player indices: 0=你, 1=下家(右), 2=對家(上), 3=上家(左)
+// 玩家對應：0=你(下), 1=下家(右), 2=對家(上), 3=上家(左)
 function renderAllZones(state) {
-  // 你（下區）
   renderHandButtons('bottom-hand', state.your_hand, state.phase === 'human_discard');
   renderTiles('bottom-melds', flatMelds(state.melds[0]));
   renderDiscards('bottom-discards', state.discards[0]);
 
-  // 對家（上區）idx=2
   renderBackTiles('top-hand', state.hand_counts[2]);
   renderTiles('top-melds', flatMelds(state.melds[2]));
   renderDiscards('top-discards', state.discards[2]);
 
-  // 上家（左區）idx=3
   renderBackTiles('left-hand', state.hand_counts[3]);
   renderTiles('left-melds', flatMelds(state.melds[3]));
   renderDiscards('left-discards', state.discards[3]);
 
-  // 下家（右區）idx=1
   renderBackTiles('right-hand', state.hand_counts[1]);
   renderTiles('right-melds', flatMelds(state.melds[1]));
   renderDiscards('right-discards', state.discards[1]);
@@ -100,10 +118,14 @@ function flatMelds(melds) {
   return melds.flatMap(m => m);
 }
 
-function makeTileEl(text, cls = '') {
+// ── 牌片建立 ────────────────────────────────────────────────
+function makeTileEl(text, extraClass = '') {
   const el = document.createElement('div');
-  el.className = 'tile' + (cls ? ' ' + cls : '');
-  el.textContent = text;
+  const suit = suitOf(text);
+  el.className = 'tile' + (extraClass ? ' ' + extraClass : '') + (suit === 'flower' ? ' flower' : '');
+  if (suit) el.dataset.suit = suit;
+  // 換行：超過2字元時折行
+  el.textContent = text.length > 2 ? text.slice(0, 2) + '\n' + text.slice(2) : text;
   return el;
 }
 
@@ -122,9 +144,7 @@ function renderDiscards(id, tiles) {
 function renderBackTiles(id, count) {
   const el = document.getElementById(id);
   el.innerHTML = '';
-  for (let i = 0; i < count; i++) {
-    el.appendChild(makeTileEl('', 'back'));
-  }
+  for (let i = 0; i < count; i++) el.appendChild(makeTileEl('', 'back'));
 }
 
 function renderHandButtons(id, tiles, enabled) {
@@ -133,7 +153,9 @@ function renderHandButtons(id, tiles, enabled) {
   tiles.forEach((t, i) => {
     const btn = document.createElement('button');
     btn.className = 'tile-btn';
-    btn.textContent = t;
+    const suit = suitOf(t);
+    if (suit) btn.dataset.suit = suit;
+    btn.textContent = t.length > 2 ? t.slice(0, 2) + '\n' + t.slice(2) : t;
     btn.disabled = !enabled;
     btn.onclick = () => sendDiscard(i);
     el.appendChild(btn);
@@ -141,9 +163,7 @@ function renderHandButtons(id, tiles, enabled) {
 }
 
 function setHandEnabled(enabled) {
-  document.querySelectorAll('#bottom-hand .tile-btn').forEach(b => {
-    b.disabled = !enabled;
-  });
+  document.querySelectorAll('#bottom-hand .tile-btn').forEach(b => { b.disabled = !enabled; });
 }
 
 // ── 提示卡 ───────────────────────────────────────────────────
@@ -155,20 +175,18 @@ function showPrompt(prompt) {
 
   const labels = {
     win_tsumo: '自摸！',
-    win_ron: `胡！（${prompt.tile}）`,
-    rob_kong: `搶槓！（${prompt.tile}）`,
-    add_kong: `加槓 ${prompt.tile}`,
-    kong: `槓 ${prompt.tile}`,
-    pon: `碰 ${prompt.tile}`,
-    chi: `吃 ${prompt.tile}`,
+    win_ron:   `胡！（${prompt.tile}）`,
+    rob_kong:  `搶槓！（${prompt.tile}）`,
+    add_kong:  `加槓 ${prompt.tile}`,
+    kong:      `槓 ${prompt.tile}`,
+    pon:       `碰 ${prompt.tile}`,
+    chi:       `吃 ${prompt.tile}`,
   };
   title.textContent = labels[prompt.type] ?? prompt.type;
   btns.innerHTML = '';
 
   if (prompt.type === 'chi' && prompt.chi_options) {
-    prompt.chi_options.forEach((opt, i) => {
-      addBtn(btns, opt.join(''), () => sendAction(`chi:${i}`));
-    });
+    prompt.chi_options.forEach((opt, i) => addBtn(btns, opt.join(''), () => sendAction(`chi:${i}`)));
   } else {
     addBtn(btns, '✓ 接受', () => sendAction('y'));
   }
@@ -190,7 +208,6 @@ function addBtn(container, label, onclick) {
 function renderLog(lines) {
   const box = document.getElementById('log-box');
   box.innerHTML = '';
-  // 最新在最上（column-reverse）
   lines.forEach(l => {
     const p = document.createElement('p');
     p.textContent = l;
@@ -203,27 +220,10 @@ function showGameOver(state) {
   hidePrompt();
   const banner = document.getElementById('gameover-banner');
   banner.style.display = 'block';
-  banner.querySelector('h2').textContent = state.winner
-    ? `${state.winner} 胡牌！`
-    : '和局';
-  const sc = banner.querySelector('.scores');
-  if (state.scores && state.scores.length) {
-    sc.textContent = state.scores.map(([label, pts]) => `${label} ${pts}台`).join('　');
-  } else {
-    sc.textContent = '';
-  }
+  document.getElementById('gameover-title').textContent =
+    state.winner ? `${state.winner} 胡牌！` : '和局';
+  const sc = document.getElementById('gameover-scores');
+  sc.textContent = (state.scores && state.scores.length)
+    ? state.scores.map(([label, pts]) => `${label}　${pts} 台`).join('\n')
+    : '';
 }
-
-// ── 初始化 ───────────────────────────────────────────────────
-document.addEventListener('DOMContentLoaded', () => {
-  // gameover banner（動態建立，避免 HTML 冗餘）
-  if (!document.getElementById('gameover-banner')) {
-    const banner = document.createElement('div');
-    banner.id = 'gameover-banner';
-    banner.innerHTML = `
-      <h2></h2>
-      <div class="scores"></div>
-      <button onclick="startGame()">再來一局</button>`;
-    document.body.appendChild(banner);
-  }
-});

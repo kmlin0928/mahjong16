@@ -8,7 +8,8 @@
   - 摘要：在 .tile.discard 加 background: #ffd6e7（粉紅）；
     覆蓋花牌綠色背景（花牌棄牌也用粉紅）
 
-- [/] Task 2：吃/碰/槓/補花 log 條目醒目樣式
+- [v] Task 2：吃/碰/槓/補花 log 條目醒目樣式
+  - Commit b087b4f：feat(ui): 吃/碰/槓/補花 log 條目醒目顯示
   - 檔案：static/style.css（新增 p.meld-action）、
     static/app.js（appendLog 偵測關鍵字加 class）
   - 摘要：appendLog 中若訊息含「吃」「碰」「槓」「補花」，

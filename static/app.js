@@ -85,7 +85,7 @@ function startGame() {
 // 圈風循環（東→南→西→北→東...）
 const WIND_CYCLE = ['東', '南', '西', '北'];
 
-function _startNewGame(dealerIdx = null, consecutive = 0, seatWinds = null) {
+function _startNewGame(dealerIdx = null, consecutive = 0, seatWinds = null, roundWind = null) {
   document.getElementById('start-overlay').style.display = 'none';
   document.getElementById('gameover-banner').style.display = 'none';
   document.getElementById('log-box').innerHTML = '';
@@ -95,6 +95,7 @@ function _startNewGame(dealerIdx = null, consecutive = 0, seatWinds = null) {
   const cmd = { cmd: 'new_game', contest: true, consecutive };
   if (dealerIdx !== null) cmd.dealer_idx = dealerIdx;
   if (seatWinds !== null) cmd.seat_winds = seatWinds;
+  if (roundWind !== null) cmd.game_round_wind = roundWind;
   wsSend(cmd);
 }
 
@@ -163,11 +164,11 @@ function updateDeckCount(state) {
 
 // ── 風圈門風 ────────────────────────────────────────────────
 function updateWindBadge(state) {
-  const gameWind   = state.game_wind || '?';
-  const winds      = state.seat_winds || [];
-  const dealerWind = (winds.length > 0 && state.dealer_idx >= 0)
+  const gameRoundWind = state.game_round_wind || state.game_wind || '?';
+  const winds         = state.seat_winds || [];
+  const dealerWind    = (winds.length > 0 && state.dealer_idx >= 0)
     ? winds[state.dealer_idx] : '?';
-  document.getElementById('wind-game').textContent  = gameWind + '風';
+  document.getElementById('wind-game').textContent  = gameRoundWind + '風';
   document.getElementById('wind-round').textContent = dealerWind + '局';
 
   // 各方位門風標籤
@@ -389,15 +390,15 @@ function showGameOver(state) {
   // 按鈕
   btnArea.innerHTML = '';
   if (isConsec) {
-    // 連莊：莊家不變，consecutive+1，座次不變
+    // 連莊：莊家不變，consecutive+1，座次與圈風不變
     addGameBtn(btnArea, '連莊！', () =>
-      _startNewGame(state.dealer_idx, state.consecutive + 1, state.seat_winds));
+      _startNewGame(state.dealer_idx, state.consecutive + 1, state.seat_winds, state.game_round_wind));
     addGameBtn(btnArea, '重置新局', () => _startNewGame());
   } else {
-    // 下莊：dealer 前進，座次不變
+    // 下莊：dealer 前進，座次與圈風不變
     const nextDealer = (state.dealer_idx + 1) % 4;
     addGameBtn(btnArea, '下一局', () =>
-      _startNewGame(nextDealer, 0, state.seat_winds));
+      _startNewGame(nextDealer, 0, state.seat_winds, state.game_round_wind));
     addGameBtn(btnArea, '重置新局', () => _startNewGame());
   }
 }

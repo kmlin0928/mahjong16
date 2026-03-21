@@ -1766,6 +1766,7 @@ class GameState:
     scores: list[tuple[str, int]] | None = None
     drawn_tile_idx: int | None = None  # 排序後新摸牌的索引（human_discard 時有效）
     all_hands: list[list[str]] | None = None  # game_over 時填入四家完整手牌（已排序）
+    game_round_wind: str = ""  # 圈風（東/南/西/北），獨立於局風 game_wind
 
 
 def player_label(player: int, seat_winds: list[str] | None = None) -> str:
@@ -1803,6 +1804,7 @@ class GameSession:
         dealer_idx_override: int | None = None,
         consecutive: int = 0,
         seat_winds: list[str] | None = None,
+        game_round_wind: str | None = None,
     ) -> None:
         """初始化 GameSession。
 
@@ -1810,15 +1812,18 @@ class GameSession:
             contest:             競賽模式，AI 手牌不顯示牌名
             dealer_idx_override: 指定莊家（連莊時傳入）
             consecutive:         連莊次數
-            seat_winds:          指定座次門風列表；None 時隨機抽定
+            seat_winds:          指定座次門風列表；None 時隨機順時針抽定
+            game_round_wind:     圈風（東/南/西/北）；None 時等於莊家門風
         """
         self.contest = contest
         self.dealer_idx_override = dealer_idx_override
         self.consecutive = consecutive
         self.seat_winds_override = seat_winds
+        self.game_round_wind_override = game_round_wind
         self._gen: object = None
         self._log: list[str] = []
         self._game_wind: str = ""
+        self._game_round_wind: str = ""
         self._seat_winds: list[str] = []
         self._dealer_idx: int = -1
         self._drawn_tile: int | None = None  # 本輪人類玩家剛摸到的牌號
@@ -1912,6 +1917,7 @@ class GameSession:
             scores=scores,
             drawn_tile_idx=drawn_tile_idx,
             all_hands=all_hands,
+            game_round_wind=self._game_round_wind,
         )
 
     def _log_clear(self) -> None:
@@ -1945,23 +1951,30 @@ class GameSession:
         m.init_deal()
         self._log.clear()
 
-        # 分配門風：連莊沿用上局座次，新局隨機抽定
+        # 分配門風：連莊沿用上局座次，新局隨機順時針抽定
         if self.seat_winds_override is not None:
             seat_winds = list(self.seat_winds_override)
         else:
-            seat_winds = _rnd.sample(_SEAT_WIND_NAMES, len(_SEAT_WIND_NAMES))
+            _offset = _rnd.randrange(4)
+            seat_winds = [_SEAT_WIND_NAMES[(_offset + i) % 4] for i in range(4)]
         plabel = lambda p: player_label(p, seat_winds)  # noqa: E731
         human_wind = seat_winds[HUMAN_PLAYER]
         if self.dealer_idx_override is not None:
             dealer_idx = self.dealer_idx_override
         else:
             dealer_idx = 0          # 首局東家先莊
-        game_wind = seat_winds[dealer_idx]  # 莊家門風即圈風
+        game_wind = seat_winds[dealer_idx]  # 局風 = 莊家門風
+        game_round_wind = (
+            self.game_round_wind_override
+            if self.game_round_wind_override is not None
+            else game_wind
+        )
         self._game_wind = game_wind
+        self._game_round_wind = game_round_wind
         self._seat_winds = seat_winds
         self._dealer_idx = dealer_idx
 
-        self._L(f"【你是 {human_wind}｜{game_wind}局】莊家：{plabel(dealer_idx)}")
+        self._L(f"【你是 {human_wind}｜{game_round_wind}風{game_wind}局】莊家：{plabel(dealer_idx)}")
 
         # 莊家多摸一張
         dealer_p = m.players[dealer_idx]
@@ -2319,16 +2332,18 @@ def main(
     consecutive: int = 0,
     contest_mode: bool = False,
     seat_winds_override: list[str] | None = None,
-) -> tuple[int | None, int, list[str]]:
+    game_round_wind_override: str | None = None,
+) -> tuple[int | None, int, list[str], str]:
     """四人 AI 麻將主遊戲迴圈。
 
     Args:
-        dealer_idx_override:  指定莊家座位（連莊時傳入）；None 則從東家起莊。
-        consecutive:          本局連莊次數（0 表示首局）。
-        seat_winds_override:  指定座次門風；None 時隨機抽定（新局）。
+        dealer_idx_override:     指定莊家座位（連莊時傳入）；None 則從東家起莊。
+        consecutive:             本局連莊次數（0 表示首局）。
+        seat_winds_override:     指定座次門風；None 時隨機順時針抽定（新局）。
+        game_round_wind_override: 圈風；None 時等於莊家門風。
 
     Returns:
-        (winner, dealer_idx, seat_winds)：winner 為胡牌玩家索引，和局時為 None。
+        (winner, dealer_idx, seat_winds, game_round_wind)：winner 為胡牌玩家索引，和局時為 None。
 
     流程：
     1. 初始化並發牌、補花
@@ -2341,21 +2356,23 @@ def main(
     m = Mahjong(n_hand=16)
     m.init_deal()
 
-    # 分配門風：連莊沿用上局座次，新局隨機抽定
+    # 分配門風：連莊沿用上局座次，新局隨機順時針抽定
     import random as _rnd
-    seat_winds = (
-        list(seat_winds_override) if seat_winds_override is not None
-        else _rnd.sample(_SEAT_WIND_NAMES, len(_SEAT_WIND_NAMES))
-    )
+    if seat_winds_override is not None:
+        seat_winds = list(seat_winds_override)
+    else:
+        _offset = _rnd.randrange(4)
+        seat_winds = [_SEAT_WIND_NAMES[(_offset + i) % 4] for i in range(4)]
     plabel = lambda p: player_label(p, seat_winds)  # noqa: E731
     human_wind = seat_winds[HUMAN_PLAYER]
     if dealer_idx_override is not None:
         dealer_idx = dealer_idx_override
     else:
         dealer_idx = 0          # 首局東家先莊
-    game_wind = seat_winds[dealer_idx]  # 莊家門風即圈風
+    game_wind = seat_winds[dealer_idx]  # 局風 = 莊家門風
+    game_round_wind = game_round_wind_override if game_round_wind_override is not None else game_wind
     consec_label = f"  連莊 {consecutive} 次" if consecutive > 0 else ""
-    print(f"\n【你是 {human_wind}（座位 {HUMAN_PLAYER}）｜{game_wind}局{consec_label}】")
+    print(f"\n【你是 {human_wind}（座位 {HUMAN_PLAYER}）｜{game_round_wind}風{game_wind}局{consec_label}】")
     for i, w in enumerate(seat_winds):
         parts = []
         if i == HUMAN_PLAYER:
@@ -2454,7 +2471,7 @@ def main(
                         _detail = " ".join(f"{n}+{v}" for n, v in _score)
                         print(f"台數明細：{_detail} = 共 {_total} 台")
                         _print_summary()
-                        return player, dealer_idx, seat_winds
+                        return player, dealer_idx, seat_winds, game_round_wind
                 else:
                     print(f"\n{plabel(player)}胡", end="")
                     for t in p.hand[:-1]:
@@ -2465,7 +2482,7 @@ def main(
                     _detail = " ".join(f"{n}+{v}" for n, v in _score)
                     print(f"台數明細：{_detail} = 共 {_total} 台")
                     _print_summary()
-                    return player, dealer_idx, seat_winds
+                    return player, dealer_idx, seat_winds, game_round_wind
 
             # 牌堆若已空（補花後耗盡），宣告和局
             if not m.remain:
@@ -2526,7 +2543,7 @@ def main(
                                 print(f"台數明細：{_detail} = 共 {_total} 台")
                                 robbed = True
                                 _print_summary()
-                                return rob_idx, dealer_idx, seat_winds
+                                return rob_idx, dealer_idx, seat_winds, game_round_wind
                     if not robbed:
                         # 無搶槓，補摸一張後繼續本輪出牌（skip_draw=True 跳過下次摸牌）
                         if m.remain:
@@ -2552,7 +2569,7 @@ def main(
                         _detail = " ".join(f"{n}+{v}" for n, v in _score)
                         print(f"台數明細：{_detail} = 共 {_total} 台")
                         _print_summary()
-                        return player, dealer_idx, seat_winds
+                        return player, dealer_idx, seat_winds, game_round_wind
             skip_draw = False
 
         # 棄牌前將手牌由小到大排列（方便閱讀與選牌）
@@ -2654,7 +2671,7 @@ def main(
                 _detail = " ".join(f"{n}+{v}" for n, v in _score)
                 print(f"台數明細：{_detail} = 共 {_total} 台")
                 _print_summary()
-                return cand_idx, dealer_idx, seat_winds
+                return cand_idx, dealer_idx, seat_winds, game_round_wind
 
         # 檢查其他三家是否明槓（AI_AUTO_KONG 控制；人類玩家詢問 y/n）
         kong_player: int | None = None
@@ -2795,7 +2812,7 @@ def main(
 
     print("\n和局")
     _print_summary()
-    return None, dealer_idx, seat_winds
+    return None, dealer_idx, seat_winds, game_round_wind
 
 
 if __name__ == "__main__":
@@ -2846,6 +2863,43 @@ if __name__ == "__main__":
         assert len(_state.your_hand) == 0 or _state.winner is not None or _state.winner is None
         assert len(_state.discards) == 4, f"discards 應有 4 家：{len(_state.discards)}"
         print(f"  ✓ GameSession 完整執行（{_elapsed2:.2f}s），{_steps} 步，winner={_state.winner!r}")
+
+        print("\n--- 整合測試 3：64 組合（4圈風×4莊家×4人類門風）---")
+        _combo_pass = 0
+        for _rw in _SEAT_WIND_NAMES:           # 4 圈風
+            for _d_i in range(4):              # 4 莊家位置
+                for _hw_i in range(4):         # 4 人類門風
+                    _seat_winds = [_SEAT_WIND_NAMES[(_hw_i + k) % 4] for k in range(4)]
+                    _s64 = GameSession(
+                        contest=False,
+                        dealer_idx_override=_d_i,
+                        seat_winds=_seat_winds,
+                        game_round_wind=_rw,
+                    )
+                    _st64 = _s64.start()
+                    _steps64 = 0
+                    while _st64.phase != "game_over":
+                        if _st64.phase == "human_discard":
+                            _st64 = _s64.respond("0")
+                        else:
+                            _st64 = _s64.respond("n")
+                        _steps64 += 1
+                        assert _steps64 < 500, (
+                            f"組合({_rw},{_d_i},{_hw_i}) 超過 500 步"
+                        )
+                    assert _st64.game_round_wind == _rw, (
+                        f"game_round_wind 應={_rw!r} 實={_st64.game_round_wind!r}"
+                    )
+                    assert _st64.seat_winds[0] == _SEAT_WIND_NAMES[_hw_i], (
+                        f"人類門風應={_SEAT_WIND_NAMES[_hw_i]!r} "
+                        f"實={_st64.seat_winds[0]!r}"
+                    )
+                    assert _st64.seat_winds[_d_i] == _seat_winds[_d_i], (
+                        f"莊家({_d_i})門風應={_seat_winds[_d_i]!r} "
+                        f"實={_st64.seat_winds[_d_i]!r}"
+                    )
+                    _combo_pass += 1
+        print(f"  ✓ {_combo_pass}/64 組合全部通過")
 
         print("\n--- 單元測試：拉莊台數公式 ---")
         # 最簡胡牌手牌：5 組刻子（1–5筒各3張）+ 1萬對子 = 17 張
@@ -2950,13 +3004,15 @@ if __name__ == "__main__":
     # 連莊迴圈
     dealer_override: int | None = None
     winds_override: list[str] | None = None   # None = 首局隨機抽定
+    round_wind_override: str | None = None    # None = 首局等於莊家門風
     consec = 0
     while True:
-        winner, dealer_idx, seat_winds = main(
+        winner, dealer_idx, seat_winds, game_round_wind = main(
             dealer_idx_override=dealer_override,
             consecutive=consec,
             contest_mode=contest,
             seat_winds_override=winds_override,
+            game_round_wind_override=round_wind_override,
         )
         if winner == dealer_idx:
             print(f"\n{seat_winds[dealer_idx]} 胡牌！連莊！")
@@ -2969,5 +3025,6 @@ if __name__ == "__main__":
         if ans != "y":
             break
         consec += 1
-        winds_override = seat_winds   # 連莊保持同一座次
+        winds_override = seat_winds        # 連莊保持同一座次
+        round_wind_override = game_round_wind  # 連莊保持同一圈風
         dealer_override = dealer_idx

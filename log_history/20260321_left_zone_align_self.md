@@ -6,7 +6,8 @@
 ## 任務清單
 
 ### Task 1：style.css — #zone-left 加 align-self: start
-- [/] 檔案範圍：`static/style.css`
+- [v] 檔案範圍：`static/style.css`
+- Commit 5bb23a9：fix(style): 左側區加 align-self:start，防止被中央 log 拉伸高度
 - 摘要：
   在 `#zone-left` 規則新增 `align-self: start`，
   使其高度由自身內容決定，不隨 #zone-center 的 log 高度拉伸

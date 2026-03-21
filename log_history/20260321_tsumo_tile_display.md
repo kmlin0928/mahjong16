@@ -6,7 +6,8 @@
 ## 任務清單
 
 ### Task 1：mahjong.py — AI 自摸胡顯示摸入牌（終端機 + 網頁）
-- [/] 檔案範圍：`mahjong.py`（main() AI 自摸約 line 2478；_game_loop AI 自摸約 line 2065）
+- [v] 檔案範圍：`mahjong.py`（main() AI 自摸約 line 2478；_game_loop AI 自摸約 line 2065）
+- Commit e62d7e5：fix(mahjong): 自摸胡牌顯示摸入牌（終端機與網頁 AI）
 - 摘要：
   1. main() AI 自摸：`{plabel(player)}胡`
      → `{plabel(player)}自摸胡 {n_to_chinese(drawn)}`

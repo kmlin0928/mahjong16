@@ -369,6 +369,14 @@ function showGameOver(state) {
         row.appendChild(sep);
       }
       hand.forEach(t => row.appendChild(makeTileEl(t)));
+      // 花牌
+      const bonus = (state.bonus && state.bonus[i]) || [];
+      if (bonus.length) {
+        const sep2 = document.createElement('span');
+        sep2.className = 'meld-sep';
+        row.appendChild(sep2);
+        bonus.forEach(t => row.appendChild(makeTileEl(t)));
+      }
       handsEl.appendChild(row);
     });
   }

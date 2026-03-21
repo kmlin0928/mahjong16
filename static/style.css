@@ -117,6 +117,17 @@ body {
   padding: 4px;
 }
 
+.dealer-badge {
+  font-size: 0.6rem;
+  font-weight: 900;
+  color: #2a1a00;
+  background: #c8960a;
+  padding: 1px 6px;
+  border-radius: 3px;
+  letter-spacing: 0.05em;
+  white-space: nowrap;
+}
+
 .zone-label {
   font-size: 0.62rem;
   color: rgba(255,255,255,0.5);

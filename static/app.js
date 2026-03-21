@@ -108,11 +108,29 @@ function sendAction(action) {
   wsSend({ cmd: 'action', action });
 }
 
+// ── 莊家連莊標示 ─────────────────────────────────────────────
+const DEALER_BADGE_IDS = ['dealer-bottom', 'dealer-right', 'dealer-top', 'dealer-left'];
+
+function updateDealerBadge(state) {
+  const consec = state.consecutive ?? 0;
+  DEALER_BADGE_IDS.forEach((id, i) => {
+    const el = document.getElementById(id);
+    if (!el) return;
+    if (i === state.dealer_idx) {
+      el.textContent = `連莊${consec}`;
+      el.classList.remove('hidden');
+    } else {
+      el.classList.add('hidden');
+    }
+  });
+}
+
 // ── 渲染主控 ────────────────────────────────────────────────
 function renderState(state) {
   _state = state;
   updateWindBadge(state);
   updateDeckCount(state);
+  updateDealerBadge(state);
   renderAllZones(state);
   // log 已由 WS 逐行推送，不在此覆蓋
 

@@ -1,0 +1,75 @@
+<!DOCTYPE html>
+<html lang="zh-Hant">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>麻將競賽模式</title>
+  <link rel="stylesheet" href="/static/style.css">
+</head>
+<body>
+
+<!-- 風圈門風（最左上方） -->
+<div id="wind-badge">
+  <div class="wind-game" id="wind-game">東</div>
+  <div class="wind-sep">局</div>
+  <div class="wind-seat" id="wind-seat">南</div>
+  <div class="wind-sep">門</div>
+</div>
+
+<!-- 四方位牌桌 -->
+<div id="table">
+
+  <!-- 上區：對家 -->
+  <div id="zone-top" class="zone">
+    <div class="zone-label">對家</div>
+    <div class="tile-row" id="top-melds"></div>
+    <div class="tile-row" id="top-hand"></div>
+    <div class="tile-row discards" id="top-discards"></div>
+  </div>
+
+  <!-- 中排 -->
+  <div id="zone-middle">
+    <!-- 左區：上家 -->
+    <div id="zone-left" class="zone zone-side">
+      <div class="zone-label">上家</div>
+      <div class="tile-col" id="left-melds"></div>
+      <div class="tile-col" id="left-hand"></div>
+      <div class="tile-col discards" id="left-discards"></div>
+    </div>
+
+    <!-- 中央：提示 + log -->
+    <div id="zone-center">
+      <div id="prompt-card" class="hidden">
+        <div id="prompt-title"></div>
+        <div id="prompt-buttons"></div>
+      </div>
+      <div id="log-box"></div>
+    </div>
+
+    <!-- 右區：下家 -->
+    <div id="zone-right" class="zone zone-side">
+      <div class="zone-label">下家</div>
+      <div class="tile-col" id="right-melds"></div>
+      <div class="tile-col" id="right-hand"></div>
+      <div class="tile-col discards" id="right-discards"></div>
+    </div>
+  </div>
+
+  <!-- 下區：你 -->
+  <div id="zone-bottom" class="zone">
+    <div class="tile-row discards" id="bottom-discards"></div>
+    <div class="tile-row" id="bottom-melds"></div>
+    <div class="tile-row hand-buttons" id="bottom-hand"></div>
+    <div class="zone-label">你</div>
+  </div>
+
+</div>
+
+<!-- 開始按鈕（未開局時顯示） -->
+<div id="start-overlay">
+  <button id="btn-start" onclick="startGame()">開始對局</button>
+</div>
+
+<script src="/static/app.js"></script>
+</body>
+</html>

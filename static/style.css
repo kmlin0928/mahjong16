@@ -1,0 +1,283 @@
+/* ── 基礎 ── */
+*, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+body {
+  font-family: "Noto Sans TC", "Microsoft JhengHei", sans-serif;
+  background: #1a5c2a;
+  color: #fff;
+  height: 100dvh;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  overflow: hidden;
+}
+
+/* ── 風圈門風（最左上方固定） ── */
+#wind-badge {
+  position: fixed;
+  top: 12px;
+  left: 12px;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 2px;
+  z-index: 100;
+  background: rgba(0, 0, 0, 0.55);
+  border: 2px solid #d4a843;
+  border-radius: 8px;
+  padding: 6px 10px;
+  line-height: 1.2;
+}
+
+.wind-game {
+  font-size: 1.6rem;
+  font-weight: 900;
+  color: #f5d060;
+  text-shadow: 0 0 6px #c8960a;
+}
+
+.wind-sep {
+  font-size: 0.65rem;
+  color: #c8c8c8;
+  letter-spacing: 0.05em;
+}
+
+.wind-seat {
+  font-size: 1.3rem;
+  font-weight: 700;
+  color: #a8d8a8;
+}
+
+/* ── 牌桌主網格 ── */
+#table {
+  width: min(96vw, 860px);
+  height: min(96dvh, 680px);
+  display: grid;
+  grid-template-rows: 1fr auto 1fr;
+  gap: 4px;
+}
+
+#zone-middle {
+  display: grid;
+  grid-template-columns: 1fr auto 1fr;
+  gap: 4px;
+  min-height: 0;
+}
+
+/* ── 各方位區塊 ── */
+.zone {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 4px;
+  padding: 4px;
+}
+
+.zone-side {
+  writing-mode: horizontal-tb;
+}
+
+.zone-label {
+  font-size: 0.7rem;
+  color: #ccc;
+  letter-spacing: 0.1em;
+}
+
+/* ── 中央區 ── */
+#zone-center {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: space-between;
+  padding: 6px;
+  min-width: 140px;
+  max-width: 220px;
+}
+
+/* ── 牌片共用 ── */
+.tile {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 30px;
+  height: 42px;
+  background: #f5f0e0;
+  color: #111;
+  border-radius: 4px;
+  font-size: 0.65rem;
+  font-weight: 600;
+  border: 1px solid #bbb;
+  white-space: pre-line;
+  text-align: center;
+  line-height: 1.1;
+  flex-shrink: 0;
+}
+
+.tile.back {
+  background: #2a6b8a;
+  color: transparent;
+  border-color: #1a4a60;
+}
+
+.tile.flower {
+  background: #c8e6c9;
+  border-color: #81c784;
+}
+
+.tile.discard {
+  width: 22px;
+  height: 30px;
+  font-size: 0.55rem;
+}
+
+/* ── 手牌按鈕（你） ── */
+.hand-buttons .tile-btn {
+  cursor: pointer;
+  width: 34px;
+  height: 48px;
+  background: #fffde7;
+  color: #111;
+  border: 2px solid #888;
+  border-radius: 5px;
+  font-size: 0.7rem;
+  font-weight: 700;
+  padding: 2px;
+  transition: transform 0.1s, background 0.1s;
+  white-space: pre-line;
+  text-align: center;
+  line-height: 1.15;
+}
+
+.hand-buttons .tile-btn:hover {
+  transform: translateY(-6px);
+  background: #fff176;
+  border-color: #e65100;
+}
+
+.hand-buttons .tile-btn:disabled {
+  cursor: default;
+  opacity: 0.5;
+  transform: none;
+}
+
+/* ── 排列輔助 ── */
+.tile-row {
+  display: flex;
+  flex-direction: row;
+  flex-wrap: wrap;
+  gap: 2px;
+  justify-content: center;
+}
+
+.tile-col {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  align-items: center;
+}
+
+.discards {
+  opacity: 0.85;
+}
+
+/* ── 中央提示卡 ── */
+#prompt-card {
+  background: rgba(0,0,0,0.75);
+  border: 2px solid #f5d060;
+  border-radius: 10px;
+  padding: 10px 12px;
+  text-align: center;
+  width: 100%;
+}
+
+#prompt-card.hidden { display: none; }
+
+#prompt-title {
+  font-size: 0.85rem;
+  margin-bottom: 8px;
+  color: #f5d060;
+}
+
+#prompt-buttons {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  justify-content: center;
+}
+
+#prompt-buttons button {
+  padding: 4px 10px;
+  border-radius: 6px;
+  border: none;
+  background: #f5d060;
+  color: #111;
+  font-weight: 700;
+  cursor: pointer;
+  font-size: 0.8rem;
+}
+
+#prompt-buttons button:hover { background: #ffe082; }
+
+/* ── 事件 log ── */
+#log-box {
+  width: 100%;
+  max-height: 120px;
+  overflow-y: auto;
+  font-size: 0.65rem;
+  color: #ccc;
+  padding: 4px;
+  background: rgba(0,0,0,0.3);
+  border-radius: 6px;
+  display: flex;
+  flex-direction: column-reverse;
+}
+
+#log-box p { margin: 1px 0; }
+
+/* ── 開始覆蓋層 ── */
+#start-overlay {
+  position: fixed;
+  inset: 0;
+  background: rgba(0,0,0,0.7);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  z-index: 200;
+}
+
+#btn-start {
+  font-size: 1.4rem;
+  padding: 16px 40px;
+  border-radius: 12px;
+  border: 3px solid #f5d060;
+  background: #2a6b3a;
+  color: #f5d060;
+  font-weight: 900;
+  cursor: pointer;
+  letter-spacing: 0.15em;
+}
+
+#btn-start:hover { background: #3a8b50; }
+
+/* ── 遊戲結束橫幅 ── */
+#gameover-banner {
+  position: fixed;
+  top: 50%;
+  left: 50%;
+  transform: translate(-50%, -50%);
+  background: rgba(0,0,0,0.88);
+  border: 3px solid #f5d060;
+  border-radius: 16px;
+  padding: 24px 40px;
+  text-align: center;
+  z-index: 300;
+  display: none;
+}
+
+#gameover-banner h2 { color: #f5d060; font-size: 1.6rem; margin-bottom: 12px; }
+#gameover-banner .scores { font-size: 0.85rem; color: #ccc; margin-bottom: 16px; }
+#gameover-banner button {
+  padding: 8px 24px; border-radius: 8px; border: 2px solid #f5d060;
+  background: #2a6b3a; color: #f5d060; font-weight: 700; cursor: pointer;
+}

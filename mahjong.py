@@ -1752,6 +1752,8 @@ class GameState:
     discards: list[list[str]]
     bonus: list[list[str]]
     log: list[str]
+    game_wind: str = ""
+    seat_winds: list[str] = field(default_factory=list)
     prompt: PromptInfo | None = None
     winner: str | None = None
     scores: list[tuple[str, int]] | None = None
@@ -1804,6 +1806,8 @@ class GameSession:
         self.consecutive = consecutive
         self._gen: object = None
         self._log: list[str] = []
+        self._game_wind: str = ""
+        self._seat_winds: list[str] = []
 
     def start(self) -> GameState:
         """初始化牌局，推進至首個人類決策點，回傳 GameState。"""
@@ -1872,6 +1876,8 @@ class GameSession:
             discards=discards_out,
             bonus=bonus_out,
             log=list(self._log),
+            game_wind=self._game_wind,
+            seat_winds=self._seat_winds,
             prompt=prompt,
             winner=winner,
             scores=scores,
@@ -1923,6 +1929,8 @@ class GameSession:
         else:
             game_wind = _rnd.choice(_SEAT_WIND_NAMES)
             dealer_idx = seat_winds.index(game_wind)
+        self._game_wind = game_wind
+        self._seat_winds = seat_winds
 
         self._L(f"【你是 {human_wind}｜{game_wind}局】莊家：{plabel(dealer_idx)}")
 

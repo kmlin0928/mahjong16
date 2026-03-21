@@ -137,10 +137,11 @@ body {
   text-transform: uppercase;
 }
 
-/* ── 左側區（上家）往上靠 ── */
+/* ── 左側區（上家）往上靠，高度由內容決定不受中央 log 拉伸 ── */
 #zone-left {
   justify-content: flex-start;
   padding-top: 8%;
+  align-self: start;
 }
 
 /* ── 右側區（下家）反向排列，棄牌在頂部朝向桌面中央 ── */

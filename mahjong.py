@@ -2456,6 +2456,8 @@ def main(
             drawn = p.hand[-1]      # 補花後的實際摸入牌
             after_supplement = (_orig_drawn >= BONUS_START)  # 原為花牌則補牌視為槓上開花
             p.add_seen(drawn)
+            if player == HUMAN_PLAYER:
+                print(f"\n你摸 {n_to_chinese(drawn)}")
 
             # 判胡（摸牌後立即判斷；若補花失敗牌堆已空則 drawn 可能是花牌，跳過判胡）
             if drawn < BONUS_START and is_win_ext(p.hand[:-1], drawn, p.chi_count + p.pon_count + p.kong_count):

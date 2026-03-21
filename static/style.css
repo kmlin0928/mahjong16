@@ -246,6 +246,11 @@ body {
   overflow: hidden;
 }
 
+.hand-buttons .tile-btn.drawn {
+  background: linear-gradient(160deg, #ede0ff 60%, #d4b8f0);
+  border-bottom-color: #8855cc;
+}
+
 .hand-buttons .tile-btn:hover:not(:disabled) {
   transform: translateY(-10px);
   box-shadow: 2px 8px 12px rgba(0,0,0,0.55);

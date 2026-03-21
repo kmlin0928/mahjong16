@@ -181,7 +181,7 @@ function updateWindBadge(state) {
 function renderAllZones(state) {
   const bonus = state.bonus || [[], [], [], []];
 
-  renderHandButtons('bottom-hand', state.your_hand, state.phase === 'human_discard');
+  renderHandButtons('bottom-hand', state.your_hand, state.phase === 'human_discard', state.drawn_tile_idx ?? null);
   renderTiles('bottom-melds', flatMelds(state.melds[0]));
   renderDiscards('bottom-discards', state.discards[0]);
   renderDiscards('bottom-bonus', bonus[0]);
@@ -246,7 +246,7 @@ function renderBackTiles(id, count) {
   for (let i = 0; i < count; i++) el.appendChild(makeTileEl(''));
 }
 
-function renderHandButtons(id, tiles, enabled) {
+function renderHandButtons(id, tiles, enabled, drawnIdx = null) {
   const el = document.getElementById(id);
   el.innerHTML = '';
   tiles.forEach((t, i) => {
@@ -254,6 +254,7 @@ function renderHandButtons(id, tiles, enabled) {
     btn.className = 'tile-btn';
     const suit = suitOf(t);
     if (suit) btn.dataset.suit = suit;
+    if (i === drawnIdx) btn.classList.add('drawn');
     btn.title = t;
     const { emoji, label } = tileContent(t);
     if (emoji) {

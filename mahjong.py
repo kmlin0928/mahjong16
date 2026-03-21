@@ -1764,6 +1764,7 @@ class GameState:
     prompt: PromptInfo | None = None
     winner: str | None = None
     scores: list[tuple[str, int]] | None = None
+    drawn_tile_idx: int | None = None  # 排序後新摸牌的索引（human_discard 時有效）
 
 
 def player_label(player: int, seat_winds: list[str] | None = None) -> str:
@@ -1816,6 +1817,7 @@ class GameSession:
         self._game_wind: str = ""
         self._seat_winds: list[str] = []
         self._dealer_idx: int = -1
+        self._drawn_tile: int | None = None  # 本輪人類玩家剛摸到的牌號
 
     def start(self) -> GameState:
         """初始化牌局，推進至首個人類決策點，回傳 GameState。"""
@@ -1876,6 +1878,12 @@ class GameSession:
             melds_out.append(meld_strs)
             discards_out.append([n_to_chinese(t) for t in p.discards])
             bonus_out.append([n_to_chinese(t) for t in p.bonus])
+        drawn_tile_idx: int | None = None
+        if phase == "human_discard" and self._drawn_tile is not None:
+            try:
+                drawn_tile_idx = sorted(m.players[HUMAN_PLAYER].hand).index(self._drawn_tile)
+            except ValueError:
+                pass
         return GameState(
             phase=phase,
             your_hand=your_hand,
@@ -1892,6 +1900,7 @@ class GameSession:
             prompt=prompt,
             winner=winner,
             scores=scores,
+            drawn_tile_idx=drawn_tile_idx,
         )
 
     def _log_clear(self) -> None:
@@ -2002,6 +2011,8 @@ class GameSession:
                     break
                 after_supplement = (_orig_drawn >= BONUS_START)
                 p.add_seen(drawn)
+                if player == HUMAN_PLAYER:
+                    self._drawn_tile = drawn
 
                 # 自摸判胡
                 if drawn < BONUS_START and is_win_ext(
@@ -2082,6 +2093,8 @@ class GameSession:
                         skip_draw = True
                         continue
             else:
+                if player == HUMAN_PLAYER:
+                    self._drawn_tile = None  # 吃/碰/槓後無新摸牌，不高亮
                 # 天胡（若手牌含花牌則跳過：牌堆耗盡邊界情況）
                 if (
                     first_round and player == dealer_idx

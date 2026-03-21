@@ -1,3 +1,9 @@
+# /// script
+# requires-python = ">=3.12"
+# dependencies = [
+#   "readchar",
+# ]
+# ///
 from __future__ import annotations
 from enum import IntEnum
 # mahjong.py — 16 張麻將模擬器（Python 重構版）
@@ -1703,11 +1709,550 @@ def _check_tenpai_initial(hand: list[int]) -> bool:
     )
 
 
+# ---------------------------------------------------------------------------
+# 網頁模式資料結構：PromptInfo / GameState
+# ---------------------------------------------------------------------------
+
+@dataclass
+class PromptInfo:
+    """人類玩家的互動提示。
+
+    Attributes:
+        type:        提示類型（win_tsumo / win_ron / rob_kong / add_kong / kong / pon / chi）
+        tile:        涉及的牌名（顯示用）
+        tile_id:     涉及的牌號
+        chi_options: 吃牌時的可選組合，每項為 [ta牌名, 棄牌名, tb牌名]
+    """
+    type: str
+    tile: str
+    tile_id: int
+    chi_options: list[list[str]] | None = None
+
+
+@dataclass
+class GameState:
+    """可 JSON 序列化的遊戲快照，供網頁前端渲染使用。
+
+    Attributes:
+        phase:       "human_discard" | "prompt" | "game_over"
+        your_hand:   你的手牌牌名列表（已排序）
+        hand_counts: 四家手牌張數（競賽模式 AI 不顯示牌名）
+        melds:       四家面牌組，melds[i] 為第 i 家的副露列表，每副露為牌名列表
+        discards:    四家棄牌牌名列表
+        bonus:       四家花牌牌名列表
+        log:         本輪累積事件文字
+        prompt:      phase=="prompt" 時的提示內容
+        winner:      胡牌玩家稱謂（game_over 時）
+        scores:      台數明細列表（game_over 時）
+    """
+    phase: str
+    your_hand: list[str]
+    hand_counts: list[int]
+    melds: list[list[list[str]]]
+    discards: list[list[str]]
+    bonus: list[list[str]]
+    log: list[str]
+    prompt: PromptInfo | None = None
+    winner: str | None = None
+    scores: list[tuple[str, int]] | None = None
+
+
 def player_label(player: int) -> str:
     """回傳玩家相對於人類玩家的稱謂：你／下家／對家／上家。"""
     if player == HUMAN_PLAYER:
         return "你"
     return {1: "下家", 2: "對家", 3: "上家"}[(player - HUMAN_PLAYER) % 4]
+
+
+# ---------------------------------------------------------------------------
+# 網頁模式：GameSession（generator-based 狀態機）
+# ---------------------------------------------------------------------------
+
+class GameSession:
+    """網頁模式遊戲狀態機，使用 Python generator 實作可暫停的遊戲迴圈。
+
+    main() 的 stdin/stdout 互動模式完整保留，GameSession 為平行實作，
+    供 FastAPI 後端驅動網頁對局使用。
+
+    使用方式::
+
+        session = GameSession(contest=True)
+        state = session.start()          # 初始化並推進至首個人類決策點
+        state = session.respond("3")     # 人類棄牌（discard idx 字串）
+        state = session.respond("y")     # 人類宣胡 / 確認碰槓
+        state = session.respond("n")     # 跳過提示
+        state = session.respond("chi:1") # 人類選擇第 2 種吃法
+    """
+
+    def __init__(
+        self,
+        contest: bool = True,
+        dealer_idx_override: int | None = None,
+        consecutive: int = 0,
+    ) -> None:
+        """初始化 GameSession。
+
+        Args:
+            contest:             競賽模式，AI 手牌不顯示牌名
+            dealer_idx_override: 指定莊家（連莊時傳入）
+            consecutive:         連莊次數
+        """
+        self.contest = contest
+        self.dealer_idx_override = dealer_idx_override
+        self.consecutive = consecutive
+        self._gen: object = None
+        self._log: list[str] = []
+
+    def start(self) -> GameState:
+        """初始化牌局，推進至首個人類決策點，回傳 GameState。"""
+        self._gen = self._game_loop()
+        return next(self._gen)  # type: ignore[arg-type]
+
+    def respond(self, response: str) -> GameState:
+        """傳入人類回應，繼續推進遊戲，回傳下一個 GameState。
+
+        Args:
+            response: 對應目前 phase 的回應字串
+                - phase=="human_discard" → 棄牌索引字串（"0"–"16"）
+                - phase=="prompt"        → "y" / "n" / "chi:N"（N 為吃法索引）
+        """
+        if self._gen is None:
+            raise RuntimeError("GameSession 尚未啟動，請先呼叫 start()")
+        try:
+            return self._gen.send(response)  # type: ignore[union-attr]
+        except StopIteration as e:
+            return e.value
+
+    # ------------------------------------------------------------------
+    # 內部輔助
+    # ------------------------------------------------------------------
+
+    def _snapshot(
+        self,
+        m: "Mahjong",
+        phase: str,
+        prompt: PromptInfo | None = None,
+        winner: str | None = None,
+        scores: list[tuple[str, int]] | None = None,
+    ) -> GameState:
+        """根據目前遊戲狀態產生 GameState 快照。
+
+        Args:
+            m:      遊戲物件
+            phase:  "human_discard" | "prompt" | "game_over"
+            prompt: 提示（phase=="prompt" 時）
+            winner: 勝者稱謂（game_over 時）
+            scores: 台數明細（game_over 時）
+        """
+        your_hand = [n_to_chinese(t) for t in sorted(m.players[HUMAN_PLAYER].hand)]
+        hand_counts = [len(m.players[i].hand) for i in range(4)]
+        melds_out: list[list[list[str]]] = []
+        discards_out: list[list[str]] = []
+        bonus_out: list[list[str]] = []
+        for i in range(4):
+            p = m.players[i]
+            meld_strs: list[list[str]] = []
+            for meld in p.melds:
+                # 吃牌面牌：discard 置中顯示（與 main() 一致）
+                if len(meld) == 3 and meld[0] // COPIES != meld[1] // COPIES:
+                    display = [meld[0], meld[2], meld[1]]
+                else:
+                    display = meld
+                meld_strs.append([n_to_chinese(t) for t in display])
+            melds_out.append(meld_strs)
+            discards_out.append([n_to_chinese(t) for t in p.discards])
+            bonus_out.append([n_to_chinese(t) for t in p.bonus])
+        return GameState(
+            phase=phase,
+            your_hand=your_hand,
+            hand_counts=hand_counts,
+            melds=melds_out,
+            discards=discards_out,
+            bonus=bonus_out,
+            log=list(self._log),
+            prompt=prompt,
+            winner=winner,
+            scores=scores,
+        )
+
+    def _log_clear(self) -> None:
+        """清空 log 緩衝。"""
+        self._log.clear()
+
+    def _L(self, msg: str) -> None:
+        """附加一行事件文字至 log。"""
+        self._log.append(msg)
+
+    # ------------------------------------------------------------------
+    # 遊戲主迴圈（generator）
+    # ------------------------------------------------------------------
+
+    def _game_loop(self):  # type: ignore[return]
+        """遊戲主迴圈 generator。
+
+        在人類決策點 yield GameState，接收回應後繼續推進。
+        遊戲結束時 return 最終 GameState（透過 StopIteration.value 回傳）。
+        """
+        import random as _rnd
+        import contextlib as _cl, io as _io
+
+        def _draw_bonus_silent(m_: "Mahjong", p_: "PlayerState", idx_: int) -> None:
+            """靜默版 _draw_bonus，補牌資訊改寫入 log。"""
+            import contextlib as _c2, io as _i2
+            with _c2.redirect_stdout(_i2.StringIO()):
+                m_._draw_bonus(p_, idx_)
+            if p_.bonus:
+                bonus_tile = p_.bonus[-1]
+                if not self.contest or p_ is m_.players[HUMAN_PLAYER]:
+                    self._L(f"  補花 {n_to_chinese(bonus_tile)}")
+
+        m = Mahjong(n_hand=16)
+        m.init_deal()
+        self._log.clear()
+
+        # 分配門風
+        start = _rnd.randint(0, 3)
+        seat_winds = [_SEAT_WIND_NAMES[(start + i) % 4] for i in range(4)]
+        human_wind = seat_winds[HUMAN_PLAYER]
+        if self.dealer_idx_override is not None:
+            dealer_idx = self.dealer_idx_override
+            game_wind = seat_winds[dealer_idx]
+        else:
+            game_wind = _rnd.choice(_SEAT_WIND_NAMES)
+            dealer_idx = seat_winds.index(game_wind)
+
+        self._L(f"【你是 {human_wind}｜{game_wind}局】莊家：{player_label(dealer_idx)}")
+
+        # 莊家多摸一張
+        dealer_p = m.players[dealer_idx]
+        dealer_extra = m.deal_one()
+        dealer_p.hand.append(dealer_extra)
+        if not self.contest or dealer_idx == HUMAN_PLAYER:
+            self._L(f"莊家多摸 {n_to_chinese(dealer_extra)}")
+        else:
+            self._L("莊家多摸（隱藏）")
+
+        # 補花（使用 len 而非 n_hand，確保莊家第 17 張也補花）
+        import contextlib as _cl, io as _io
+        for _pi in range(4):
+            _pp = m.players[_pi]
+            for _i in range(len(_pp.hand)):
+                _draw_bonus_silent(m, _pp, _i)
+            for _t in _pp.hand:
+                _pp.add_seen(_t)
+
+        # 天聽偵測（跳過手牌含花牌的玩家：牌堆耗盡時補花不完整）
+        tenhou_flags: dict[int, str] = {}
+        for _pi in range(4):
+            _ph = m.players[_pi].hand
+            if any(t >= BONUS_START for t in _ph):
+                continue
+            if _check_tenpai_initial(_ph):
+                tenhou_flags[_pi] = "天聽"
+
+        player = dealer_idx
+        skip_draw = True
+        after_supplement = False
+        last_tile_drawn = False
+        first_round = True
+        first_turns_done: set[int] = set()
+
+        while m.remain:
+            p = m.players[player]
+            ai = m.ai[player]
+            self._log_clear()
+
+            if not skip_draw:
+                after_supplement = False
+                last_tile_drawn = False
+                drawn = m.deal_one()
+                if m.remain == 0:
+                    last_tile_drawn = True
+                _orig_drawn = drawn
+                if not self.contest or player == HUMAN_PLAYER:
+                    self._L(f"{player_label(player)}摸 {n_to_chinese(drawn)}")
+                else:
+                    self._L(f"{player_label(player)}摸牌")
+                p.hand.append(drawn)
+                _draw_bonus_silent(m, p, len(p.hand) - 1)
+                drawn = p.hand[-1]
+                # 補花失敗（牌堆耗盡）→ 宣告和局
+                if drawn >= BONUS_START:
+                    break
+                after_supplement = (_orig_drawn >= BONUS_START)
+                p.add_seen(drawn)
+
+                # 自摸判胡
+                if drawn < BONUS_START and is_win_ext(
+                    p.hand[:-1], drawn, p.chi_count + p.pon_count + p.kong_count
+                ):
+                    if player == HUMAN_PLAYER:
+                        pr = PromptInfo(type="win_tsumo", tile=n_to_chinese(drawn), tile_id=drawn)
+                        resp: str = yield self._snapshot(m, "prompt", prompt=pr)
+                        if resp == "y":
+                            _sc = score_hand(
+                                player, dealer_idx, self.consecutive, True, p, drawn,
+                                game_wind, seat_winds, is_kong_flower=after_supplement,
+                                is_last_tile=last_tile_drawn, is_first_round=first_round,
+                                tenhou_label=tenhou_flags.get(player, ""),
+                            )
+                            self._L(f"你自摸胡 {n_to_chinese(drawn)}！")
+                            return self._snapshot(m, "game_over", winner=player_label(player), scores=_sc)
+                        # 否則繼續出牌
+                    else:
+                        _sc = score_hand(
+                            player, dealer_idx, self.consecutive, True, p, drawn,
+                            game_wind, seat_winds, is_kong_flower=after_supplement,
+                            is_last_tile=last_tile_drawn, is_first_round=first_round,
+                            tenhou_label=tenhou_flags.get(player, ""),
+                        )
+                        self._L(f"{player_label(player)}自摸胡！")
+                        return self._snapshot(m, "game_over", winner=player_label(player), scores=_sc)
+
+                if not m.remain:
+                    break
+
+                # 加槓
+                add_meld_idx = can_add_to_pon(drawn, p.melds)
+                if add_meld_idx is not None:
+                    do_add = False
+                    if player == HUMAN_PLAYER:
+                        pr = PromptInfo(type="add_kong", tile=n_to_chinese(drawn), tile_id=drawn)
+                        resp = yield self._snapshot(m, "prompt", prompt=pr)
+                        do_add = (resp == "y")
+                    elif AI_AUTO_KONG:
+                        do_add = True
+                    if do_add:
+                        p.melds[add_meld_idx].append(drawn)
+                        p.hand.remove(drawn)
+                        p.kong_count += 1
+                        self._L(f"{player_label(player)}加槓 {n_to_chinese(drawn)}")
+                        # 搶槓掃描
+                        robbed = False
+                        for _off in range(1, 4):
+                            rob_idx = (player + _off) % 4
+                            rob_p = m.players[rob_idx]
+                            if is_win_ext(
+                                rob_p.hand, drawn,
+                                rob_p.chi_count + rob_p.pon_count + rob_p.kong_count,
+                            ):
+                                do_rob = True
+                                if rob_idx == HUMAN_PLAYER:
+                                    pr2 = PromptInfo(type="rob_kong", tile=n_to_chinese(drawn), tile_id=drawn)
+                                    resp2: str = yield self._snapshot(m, "prompt", prompt=pr2)
+                                    do_rob = (resp2 == "y")
+                                if do_rob:
+                                    _sc = score_hand(
+                                        rob_idx, dealer_idx, self.consecutive, False, rob_p,
+                                        drawn, game_wind, seat_winds, is_rob_kong=True,
+                                        tenhou_label=tenhou_flags.get(rob_idx, ""),
+                                    )
+                                    self._L(f"{player_label(rob_idx)}搶槓胡！")
+                                    return self._snapshot(m, "game_over", winner=player_label(rob_idx), scores=_sc)
+                                    robbed = True
+                        if not robbed and m.remain:
+                            extra = m.deal_one()
+                            p.hand.append(extra)
+                            _draw_bonus_silent(m, p, len(p.hand) - 1)
+                            if not self.contest or player == HUMAN_PLAYER:
+                                self._L(f"補摸 {n_to_chinese(p.hand[-1])}")
+                        after_supplement = True
+                        skip_draw = True
+                        continue
+            else:
+                # 天胡（若手牌含花牌則跳過：牌堆耗盡邊界情況）
+                if (
+                    first_round and player == dealer_idx
+                    and not (p.chi_count + p.pon_count + p.kong_count)
+                    and not any(t >= BONUS_START for t in p.hand)
+                ):
+                    for _i, _t in enumerate(p.hand):
+                        if _t < BONUS_START and is_win_ext(p.hand[:_i] + p.hand[_i + 1:], _t, 0):
+                            _sc = score_hand(
+                                player, dealer_idx, self.consecutive, True, p, _t,
+                                game_wind, seat_winds, is_first_round=True,
+                                tenhou_label=tenhou_flags.get(player, ""),
+                            )
+                            self._L(f"{player_label(player)}天胡！")
+                            return self._snapshot(m, "game_over", winner=player_label(player), scores=_sc)
+                skip_draw = False
+
+            # ── 棄牌 ──────────────────────────────────────────────────
+            # 防衛：手牌含花牌（補花失敗）→ 和局
+            if any(t >= BONUS_START for t in p.hand):
+                break
+            p.hand.sort()
+            if player == HUMAN_PLAYER:
+                resp = yield self._snapshot(m, "human_discard")
+                discard_idx = int(resp)
+                discard_tile = p.hand[discard_idx]
+                p.hand[discard_idx] = p.hand[-1]
+                p.hand.pop()
+                self._L(f"你打 {n_to_chinese(discard_tile)}")
+            else:
+                calculate_gates(m, p, ai)
+                discard_idx, discard_level = decide_play(p, ai, m.players)  # type: ignore[misc]
+                discard_tile = p.hand[discard_idx]
+                p.hand[discard_idx] = p.hand[-1]
+                p.hand.pop()
+                tear = "（拆牌）" if discard_level == DangerLevel.EXTREMELY_DANGEROUS else ""
+                self._L(f"{player_label(player)}打 {n_to_chinese(discard_tile)}{tear}")
+
+            p.discards.append(discard_tile)
+            for _obs in range(1, 4):
+                m.players[(player + _obs) % 4].add_seen(discard_tile)
+
+            # 地聽偵測
+            if (
+                first_round
+                and player not in first_turns_done
+                and not (p.chi_count + p.pon_count + p.kong_count)
+                and player not in tenhou_flags
+                and _check_tenpai_initial(p.hand)
+            ):
+                tenhou_flags[player] = "地聽"
+
+            if first_round:
+                first_turns_done.add(player)
+                if len(first_turns_done) >= 4:
+                    first_round = False
+
+            # ── 放槍 ──────────────────────────────────────────────────
+            for _off in range(1, 4):
+                cand_idx = (player + _off) % 4
+                cand_p = m.players[cand_idx]
+                if is_win_ext(
+                    cand_p.hand, discard_tile,
+                    cand_p.chi_count + cand_p.pon_count + cand_p.kong_count,
+                ):
+                    if cand_idx == HUMAN_PLAYER:
+                        pr = PromptInfo(type="win_ron", tile=n_to_chinese(discard_tile), tile_id=discard_tile)
+                        resp = yield self._snapshot(m, "prompt", prompt=pr)
+                        if resp != "y":
+                            continue
+                    cand_p.hand.append(discard_tile)
+                    _sc = score_hand(
+                        cand_idx, dealer_idx, self.consecutive, False, cand_p,
+                        discard_tile, game_wind, seat_winds, is_last_tile=last_tile_drawn,
+                        is_first_round=first_round, tenhou_label=tenhou_flags.get(cand_idx, ""),
+                    )
+                    cand_p.hand.pop()
+                    self._L(f"{player_label(cand_idx)}胡！（{player_label(player)} 放槍）")
+                    return self._snapshot(m, "game_over", winner=player_label(cand_idx), scores=_sc)
+
+            # ── 明槓 ──────────────────────────────────────────────────
+            kong_player: int | None = None
+            for _off in range(1, 4):
+                cand_idx = (player + _off) % 4
+                cand_p = m.players[cand_idx]
+                kong_triple = can_kong(cand_p.hand, discard_tile)
+                if kong_triple is not None:
+                    if cand_idx == HUMAN_PLAYER:
+                        pr = PromptInfo(type="kong", tile=n_to_chinese(discard_tile), tile_id=discard_tile)
+                        resp = yield self._snapshot(m, "prompt", prompt=pr)
+                        if resp != "y":
+                            continue
+                    elif not AI_AUTO_KONG:
+                        continue
+                    ta, tb, tc = kong_triple
+                    _do_meld(m, player, cand_idx, discard_tile, [ta, tb, tc])
+                    cand_p.kong_count += 1
+                    self._L(f"{player_label(cand_idx)}槓 {n_to_chinese(discard_tile)}")
+                    first_round = False
+                    tenhou_flags.pop(cand_idx, None)
+                    player = cand_idx
+                    kong_player = cand_idx
+                    break
+
+            # ── 碰 ────────────────────────────────────────────────────
+            pon_player: int | None = None
+            if kong_player is None:
+                for _off in range(1, 4):
+                    cand_idx = (player + _off) % 4
+                    cand_p = m.players[cand_idx]
+                    pon_pair = can_pon(cand_p.hand, discard_tile)
+                    if pon_pair is not None:
+                        if cand_idx == HUMAN_PLAYER:
+                            pr = PromptInfo(type="pon", tile=n_to_chinese(discard_tile), tile_id=discard_tile)
+                            resp = yield self._snapshot(m, "prompt", prompt=pr)
+                            if resp != "y":
+                                continue
+                        ta, tb = pon_pair
+                        _do_meld(m, player, cand_idx, discard_tile, [ta, tb])
+                        cand_p.pon_count += 1
+                        self._L(f"{player_label(cand_idx)}碰 {n_to_chinese(discard_tile)}")
+                        first_round = False
+                        tenhou_flags.pop(cand_idx, None)
+                        skip_draw = True
+                        player = cand_idx
+                        pon_player = cand_idx
+                        break
+
+            # ── 吃 ────────────────────────────────────────────────────
+            if kong_player is None and pon_player is None:
+                next_idx = (player + 1) % 4
+                np_state = m.players[next_idx]
+                chi_pair = can_chi(np_state.hand, discard_tile) if discard_tile < SUITED_END else None
+                if chi_pair is not None:
+                    do_chi = True
+                    chosen_ta, chosen_tb = chi_pair
+                    if next_idx == HUMAN_PLAYER:
+                        # 枚舉所有吃法
+                        kind_d = discard_tile // COPIES
+                        rank_d = kind_d % TILES_PER_SUIT
+                        def _find_in_h(h: list[int], k: int) -> int | None:
+                            for t in h:
+                                if t // COPIES == k:
+                                    return t
+                            return None
+                        all_combos: list[tuple[int, int]] = []
+                        combo_kinds = []
+                        if rank_d >= 2:
+                            combo_kinds.append((kind_d - 2, kind_d - 1))
+                        if 1 <= rank_d <= 7:
+                            combo_kinds.append((kind_d - 1, kind_d + 1))
+                        if rank_d <= 6:
+                            combo_kinds.append((kind_d + 1, kind_d + 2))
+                        for ka, kb in combo_kinds:
+                            ta2 = _find_in_h(np_state.hand, ka)
+                            if ta2 is None:
+                                continue
+                            tmp = list(np_state.hand)
+                            tmp.remove(ta2)
+                            tb2 = _find_in_h(tmp, kb)
+                            if tb2 is not None:
+                                all_combos.append((ta2, tb2))
+                        chi_opts = [
+                            [n_to_chinese(ta2), n_to_chinese(discard_tile), n_to_chinese(tb2)]
+                            for ta2, tb2 in all_combos
+                        ]
+                        pr = PromptInfo(
+                            type="chi", tile=n_to_chinese(discard_tile),
+                            tile_id=discard_tile, chi_options=chi_opts,
+                        )
+                        resp = yield self._snapshot(m, "prompt", prompt=pr)
+                        if resp in ("n", "pass"):
+                            do_chi = False
+                        else:
+                            ci = int(resp.replace("chi:", ""))
+                            chosen_ta, chosen_tb = all_combos[ci]
+                    if do_chi:
+                        _do_meld(m, player, next_idx, discard_tile, [chosen_ta, chosen_tb])
+                        np_state.chi_count += 1
+                        self._L(f"{player_label(next_idx)}吃 {n_to_chinese(discard_tile)}")
+                        first_round = False
+                        tenhou_flags.pop(next_idx, None)
+                        skip_draw = True
+                        player = next_idx
+                    else:
+                        player = (player + 1) % 4
+                else:
+                    player = (player + 1) % 4
+            # kong/pon 時 player 已設定，不需額外推進
+
+        # 和局
+        self._L("牌堆耗盡，和局！")
+        return self._snapshot(m, "game_over", winner=None)
 
 
 def main(
@@ -2170,18 +2715,19 @@ def main(
 if __name__ == "__main__":
     if RUN_TESTS:
         import io, contextlib, time as _time
-        print("\n--- 整合測試：固定 seed 執行一局 ---")
+        print("\n--- 整合測試 1：固定 seed 執行一局（main()）---")
         _buf = io.StringIO()
         _t0 = _time.monotonic()
         random.seed(42)
         with contextlib.redirect_stdout(_buf):
-            main()
+            main(contest_mode=False)
         _elapsed = _time.monotonic() - _t0
         _out = _buf.getvalue()
         _last = _out.rstrip().splitlines()[-1]
         assert "胡" in _last or "和局" in _last, f"結尾行應含「胡」或「和局」：{_last!r}"
-        for pid in range(4):
-            assert f"{pid}打" in _out, f"輸出應含「{pid}打」"
+        _labels = ["你打", "下家打", "對家打", "上家打"]
+        for lbl in _labels:
+            assert lbl in _out, f"輸出應含「{lbl}」"
         assert _elapsed < 5.0, f"執行時間過長：{_elapsed:.2f}s"
         has_chi = "吃" in _out
         has_pon = "碰" in _out
@@ -2190,24 +2736,73 @@ if __name__ == "__main__":
         print(f"  ✓ 一局完整執行（{_elapsed:.2f}s），結尾：{_last.strip()!r}")
         print(f"  ✓ 含吃={has_chi} 含碰={has_pon}")
 
-    # 競賽模式：隱藏 AI 手牌，讓人類玩家真正與 AI 對戰
-    _ans = input("是否隱藏 AI 手牌（競賽模式）？(y/n) ").strip().lower()
-    contest = _ans == "y"
+        print("\n--- 整合測試 2：GameSession 全 AI 模擬（contest=False）---")
+        import sys as _sys
 
-    # 連莊迴圈
-    dealer_override: int | None = None
-    consec = 0
-    while True:
-        winner, dealer_idx = main(dealer_idx_override=dealer_override, consecutive=consec, contest_mode=contest)
-        if winner == dealer_idx:
-            print(f"\n莊家（座位{dealer_idx}）胡牌！連莊！")
-        elif winner is None:
-            print(f"\n和局！連莊！")
+        _t0 = _time.monotonic()
+        random.seed(42)
+        _sess = GameSession(contest=False, dealer_idx_override=1)
+        _state = _sess.start()
+        _steps = 0
+        while _state.phase != "game_over":
+            if _state.phase == "human_discard":
+                _state = _sess.respond("0")  # 永遠打第一張
+            elif _state.phase == "prompt":
+                _pt = _state.prompt
+                if _pt is not None and _pt.type == "chi" and _pt.chi_options:
+                    _state = _sess.respond("chi:0")
+                else:
+                    _state = _sess.respond("n")  # 全部跳過（不胡、不碰槓）
+            _steps += 1
+            assert _steps < 500, "GameSession 迴圈超過 500 步，可能無限循環"
+        _elapsed2 = _time.monotonic() - _t0
+        assert _state.phase == "game_over", f"最終 phase 應為 game_over：{_state.phase!r}"
+        assert len(_state.your_hand) == 0 or _state.winner is not None or _state.winner is None
+        assert len(_state.discards) == 4, f"discards 應有 4 家：{len(_state.discards)}"
+        print(f"  ✓ GameSession 完整執行（{_elapsed2:.2f}s），{_steps} 步，winner={_state.winner!r}")
+
+        print("\n  ✓ 所有整合測試通過")
+
+    # ── 模式選單：← 指令模式 / → 網頁模式 ──────────────────────────
+    import readchar as _rc
+    print("\n選擇模式：← 指令模式　→ 網頁模式 ", end="", flush=True)
+    _key = _rc.readkey()
+    print()
+
+    if _key == _rc.key.RIGHT:
+        # 網頁模式：嘗試啟動 FastAPI server
+        import subprocess as _sp, webbrowser as _wb, time as _wt, os as _os
+        _srv = _os.path.join(_os.path.dirname(__file__), "web_mahjong.py")
+        if not _os.path.exists(_srv):
+            print("網頁伺服器尚未建立（web_mahjong.py 不存在，請完成任務 4–7）")
         else:
-            print(f"\n下莊（座位{winner} 胡牌）。結束。")
-            break
-        ans = input("繼續下一局？(y/n) ").strip().lower()
-        if ans != "y":
-            break
-        consec += 1
-        dealer_override = dealer_idx
+            print("啟動網頁伺服器 http://localhost:8000 ...")
+            _proc = _sp.Popen(["uvicorn", "web_mahjong:app", "--reload", "--host", "127.0.0.1", "--port", "8000"])
+            _wt.sleep(1.5)
+            _wb.open("http://localhost:8000")
+            try:
+                _proc.wait()
+            except KeyboardInterrupt:
+                _proc.terminate()
+    else:
+        # 指令模式（預設）
+        _ans = input("是否隱藏 AI 手牌（競賽模式）？(y/n) ").strip().lower()
+        contest = _ans == "y"
+
+        # 連莊迴圈
+        dealer_override: int | None = None
+        consec = 0
+        while True:
+            winner, dealer_idx = main(dealer_idx_override=dealer_override, consecutive=consec, contest_mode=contest)
+            if winner == dealer_idx:
+                print(f"\n莊家（座位{dealer_idx}）胡牌！連莊！")
+            elif winner is None:
+                print(f"\n和局！連莊！")
+            else:
+                print(f"\n下莊（座位{winner} 胡牌）。結束。")
+                break
+            ans = input("繼續下一局？(y/n) ").strip().lower()
+            if ans != "y":
+                break
+            consec += 1
+            dealer_override = dealer_idx

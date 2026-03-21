@@ -1967,10 +1967,6 @@ class GameSession:
         dealer_p = m.players[dealer_idx]
         dealer_extra = m.deal_one()
         dealer_p.hand.append(dealer_extra)
-        if not self.contest or dealer_idx == HUMAN_PLAYER:
-            self._L(f"莊家多摸 {n_to_chinese(dealer_extra)}")
-        else:
-            self._L("莊家多摸（隱藏）")
 
         # 補花（使用 len 而非 n_hand，確保莊家第 17 張也補花）
         import contextlib as _cl, io as _io

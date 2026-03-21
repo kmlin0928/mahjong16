@@ -1757,8 +1757,10 @@ class GameState:
     scores: list[tuple[str, int]] | None = None
 
 
-def player_label(player: int) -> str:
-    """回傳玩家相對於人類玩家的稱謂：你／下家／對家／上家。"""
+def player_label(player: int, seat_winds: list[str] | None = None) -> str:
+    """回傳玩家稱謂：若提供 seat_winds 則顯示門風（東／南／西／北），否則顯示相對位置（你／下家／對家／上家）。"""
+    if seat_winds is not None:
+        return seat_winds[player]
     if player == HUMAN_PLAYER:
         return "你"
     return {1: "下家", 2: "對家", 3: "上家"}[(player - HUMAN_PLAYER) % 4]
@@ -1913,6 +1915,7 @@ class GameSession:
         # 分配門風
         start = _rnd.randint(0, 3)
         seat_winds = [_SEAT_WIND_NAMES[(start + i) % 4] for i in range(4)]
+        plabel = lambda p: player_label(p, seat_winds)  # noqa: E731
         human_wind = seat_winds[HUMAN_PLAYER]
         if self.dealer_idx_override is not None:
             dealer_idx = self.dealer_idx_override
@@ -1921,7 +1924,7 @@ class GameSession:
             game_wind = _rnd.choice(_SEAT_WIND_NAMES)
             dealer_idx = seat_winds.index(game_wind)
 
-        self._L(f"【你是 {human_wind}｜{game_wind}局】莊家：{player_label(dealer_idx)}")
+        self._L(f"【你是 {human_wind}｜{game_wind}局】莊家：{plabel(dealer_idx)}")
 
         # 莊家多摸一張
         dealer_p = m.players[dealer_idx]
@@ -1970,9 +1973,9 @@ class GameSession:
                     last_tile_drawn = True
                 _orig_drawn = drawn
                 if not self.contest or player == HUMAN_PLAYER:
-                    self._L(f"{player_label(player)}摸 {n_to_chinese(drawn)}")
+                    self._L(f"{plabel(player)}摸 {n_to_chinese(drawn)}")
                 else:
-                    self._L(f"{player_label(player)}摸牌")
+                    self._L(f"{plabel(player)}摸牌")
                 p.hand.append(drawn)
                 _draw_bonus_silent(m, p, len(p.hand) - 1)
                 drawn = p.hand[-1]
@@ -1997,7 +2000,7 @@ class GameSession:
                                 tenhou_label=tenhou_flags.get(player, ""),
                             )
                             self._L(f"你自摸胡 {n_to_chinese(drawn)}！")
-                            return self._snapshot(m, "game_over", winner=player_label(player), scores=_sc)
+                            return self._snapshot(m, "game_over", winner=plabel(player), scores=_sc)
                         # 否則繼續出牌
                     else:
                         _sc = score_hand(
@@ -2006,8 +2009,8 @@ class GameSession:
                             is_last_tile=last_tile_drawn, is_first_round=first_round,
                             tenhou_label=tenhou_flags.get(player, ""),
                         )
-                        self._L(f"{player_label(player)}自摸胡！")
-                        return self._snapshot(m, "game_over", winner=player_label(player), scores=_sc)
+                        self._L(f"{plabel(player)}自摸胡！")
+                        return self._snapshot(m, "game_over", winner=plabel(player), scores=_sc)
 
                 if not m.remain:
                     break
@@ -2026,7 +2029,7 @@ class GameSession:
                         p.melds[add_meld_idx].append(drawn)
                         p.hand.remove(drawn)
                         p.kong_count += 1
-                        self._L(f"{player_label(player)}加槓 {n_to_chinese(drawn)}")
+                        self._L(f"{plabel(player)}加槓 {n_to_chinese(drawn)}")
                         # 搶槓掃描
                         robbed = False
                         for _off in range(1, 4):
@@ -2047,8 +2050,8 @@ class GameSession:
                                         drawn, game_wind, seat_winds, is_rob_kong=True,
                                         tenhou_label=tenhou_flags.get(rob_idx, ""),
                                     )
-                                    self._L(f"{player_label(rob_idx)}搶槓胡！")
-                                    return self._snapshot(m, "game_over", winner=player_label(rob_idx), scores=_sc)
+                                    self._L(f"{plabel(rob_idx)}搶槓胡！")
+                                    return self._snapshot(m, "game_over", winner=plabel(rob_idx), scores=_sc)
                                     robbed = True
                         if not robbed and m.remain:
                             extra = m.deal_one()
@@ -2073,8 +2076,8 @@ class GameSession:
                                 game_wind, seat_winds, is_first_round=True,
                                 tenhou_label=tenhou_flags.get(player, ""),
                             )
-                            self._L(f"{player_label(player)}天胡！")
-                            return self._snapshot(m, "game_over", winner=player_label(player), scores=_sc)
+                            self._L(f"{plabel(player)}天胡！")
+                            return self._snapshot(m, "game_over", winner=plabel(player), scores=_sc)
                 skip_draw = False
 
             # ── 棄牌 ──────────────────────────────────────────────────
@@ -2096,7 +2099,7 @@ class GameSession:
                 p.hand[discard_idx] = p.hand[-1]
                 p.hand.pop()
                 tear = "（拆牌）" if discard_level == DangerLevel.EXTREMELY_DANGEROUS else ""
-                self._L(f"{player_label(player)}打 {n_to_chinese(discard_tile)}{tear}")
+                self._L(f"{plabel(player)}打 {n_to_chinese(discard_tile)}{tear}")
 
             p.discards.append(discard_tile)
             for _obs in range(1, 4):
@@ -2137,8 +2140,8 @@ class GameSession:
                         is_first_round=first_round, tenhou_label=tenhou_flags.get(cand_idx, ""),
                     )
                     cand_p.hand.pop()
-                    self._L(f"{player_label(cand_idx)}胡！（{player_label(player)} 放槍）")
-                    return self._snapshot(m, "game_over", winner=player_label(cand_idx), scores=_sc)
+                    self._L(f"{plabel(cand_idx)}胡！（{plabel(player)} 放槍）")
+                    return self._snapshot(m, "game_over", winner=plabel(cand_idx), scores=_sc)
 
             # ── 明槓 ──────────────────────────────────────────────────
             kong_player: int | None = None
@@ -2157,7 +2160,7 @@ class GameSession:
                     ta, tb, tc = kong_triple
                     _do_meld(m, player, cand_idx, discard_tile, [ta, tb, tc])
                     cand_p.kong_count += 1
-                    self._L(f"{player_label(cand_idx)}槓 {n_to_chinese(discard_tile)}")
+                    self._L(f"{plabel(cand_idx)}槓 {n_to_chinese(discard_tile)}")
                     first_round = False
                     tenhou_flags.pop(cand_idx, None)
                     player = cand_idx
@@ -2180,7 +2183,7 @@ class GameSession:
                         ta, tb = pon_pair
                         _do_meld(m, player, cand_idx, discard_tile, [ta, tb])
                         cand_p.pon_count += 1
-                        self._L(f"{player_label(cand_idx)}碰 {n_to_chinese(discard_tile)}")
+                        self._L(f"{plabel(cand_idx)}碰 {n_to_chinese(discard_tile)}")
                         first_round = False
                         tenhou_flags.pop(cand_idx, None)
                         skip_draw = True
@@ -2239,7 +2242,7 @@ class GameSession:
                     if do_chi:
                         _do_meld(m, player, next_idx, discard_tile, [chosen_ta, chosen_tb])
                         np_state.chi_count += 1
-                        self._L(f"{player_label(next_idx)}吃 {n_to_chinese(discard_tile)}")
+                        self._L(f"{plabel(next_idx)}吃 {n_to_chinese(discard_tile)}")
                         first_round = False
                         tenhou_flags.pop(next_idx, None)
                         skip_draw = True
@@ -2283,6 +2286,7 @@ def main(
     # 隨機分配門風（東南西北）
     start = _random.randint(0, 3)
     seat_winds = [_SEAT_WIND_NAMES[(start + i) % 4] for i in range(4)]
+    plabel = lambda p: player_label(p, seat_winds)  # noqa: E731
     human_wind = seat_winds[HUMAN_PLAYER]
     if dealer_idx_override is not None:
         dealer_idx = dealer_idx_override
@@ -2353,7 +2357,7 @@ def main(
                 last_tile_drawn = True  # 剛摸到牌堆最後一張
             _orig_drawn = drawn
             _show_tile = not contest_mode or player == HUMAN_PLAYER
-            print(f"\n{player_label(player)}摸{' ' + n_to_chinese(drawn) if _show_tile else ''}", end="")
+            print(f"\n{plabel(player)}摸{' ' + n_to_chinese(drawn) if _show_tile else ''}", end="")
             p.hand.append(drawn)
             m._draw_bonus(p, len(p.hand) - 1)
             drawn = p.hand[-1]      # 補花後的實際摸入牌
@@ -2365,7 +2369,7 @@ def main(
                 if player == HUMAN_PLAYER:
                     ans = input(f"\n自摸胡！宣胡？(y/n) ").strip().lower()
                     if ans == "y":
-                        print(f"\n{player_label(player)}自摸胡 {n_to_chinese(drawn)}")
+                        print(f"\n{plabel(player)}自摸胡 {n_to_chinese(drawn)}")
                         for t in p.hand[:-1]:
                             print(f" {n_to_chinese(t)}", end="")
                         print()
@@ -2375,7 +2379,7 @@ def main(
                         print(f"台數明細：{_detail} = 共 {_total} 台")
                         return player, dealer_idx
                 else:
-                    print(f"\n{player_label(player)}胡", end="")
+                    print(f"\n{plabel(player)}胡", end="")
                     for t in p.hand[:-1]:
                         print(f" {n_to_chinese(t)}", end="")
                     print()
@@ -2405,7 +2409,7 @@ def main(
                     p.melds[add_meld_idx].append(drawn)
                     p.hand.remove(drawn)
                     p.kong_count += 1
-                    print(f"\n  {player_label(player)}加槓 {n_to_chinese(drawn)}", end="")
+                    print(f"\n  {plabel(player)}加槓 {n_to_chinese(drawn)}", end="")
 
                     # 搶槓掃描：其他三家是否可胡
                     robbed = False
@@ -2425,7 +2429,7 @@ def main(
                                 do_rob = ans2 == "y"
                             if do_rob:
                                 print(
-                                    f"\n  {player_label(rob_idx)}搶槓胡！（{player_label(player)} 加槓 {n_to_chinese(drawn)}）"
+                                    f"\n  {plabel(rob_idx)}搶槓胡！（{plabel(player)} 加槓 {n_to_chinese(drawn)}）"
                                 )
                                 rob_p.hand.append(drawn)
                                 for t in rob_p.hand[:-1]:
@@ -2459,7 +2463,7 @@ def main(
             if first_round and player == dealer_idx and not (p.chi_count + p.pon_count + p.kong_count):
                 for _i, _t in enumerate(p.hand):
                     if _t < BONUS_START and is_win_ext(p.hand[:_i] + p.hand[_i + 1:], _t, 0):
-                        print(f"\n{player_label(player)}天胡 {n_to_chinese(_t)}")
+                        print(f"\n{plabel(player)}天胡 {n_to_chinese(_t)}")
                         for t in p.hand:
                             print(f" {n_to_chinese(t)}", end="")
                         print()
@@ -2469,7 +2473,7 @@ def main(
                         print(f"台數明細：{_detail} = 共 {_total} 台")
                         return player, dealer_idx
             skip_draw = False
-            print(f"\n{player_label(player)}出牌", end="")
+            print(f"\n{plabel(player)}出牌", end="")
 
         # 棄牌前將手牌由小到大排列（方便閱讀與選牌）
         p.hand.sort()
@@ -2480,7 +2484,7 @@ def main(
             for i in range(4):
                 opp = (player + i) % 4
                 opp_discards = " ".join(n_to_chinese(t) for t in m.players[opp].discards)
-                print(f"  {player_label(opp)} 棄: {opp_discards}")
+                print(f"  {plabel(opp)} 棄: {opp_discards}")
             print("  你的手牌：")
             hand_display = "  " + "  ".join(
                 f"[{idx}]{n_to_chinese(t)}" for idx, t in enumerate(p.hand)
@@ -2495,7 +2499,7 @@ def main(
             discard_tile = p.hand[discard_idx]
             p.hand[discard_idx] = p.hand[-1]
             p.hand.pop()
-            print(f"{player_label(player)}打 {n_to_chinese(discard_tile)}_", end="")
+            print(f"{plabel(player)}打 {n_to_chinese(discard_tile)}_", end="")
             for t in p.hand:
                 print(f" {n_to_chinese(t)}", end="")
         else:
@@ -2511,7 +2515,7 @@ def main(
 
             # 拆牌：被迫棄出 EXTREMELY_DANGEROUS 牌（湊牌）
             tear = "（拆牌）" if discard_level == DangerLevel.EXTREMELY_DANGEROUS else ""
-            print(f"\n{player_label(player)}打 {n_to_chinese(discard_tile)}{tear}_", end="")
+            print(f"\n{plabel(player)}打 {n_to_chinese(discard_tile)}{tear}_", end="")
             if not contest_mode:
                 for t in p.hand:
                     print(f" {n_to_chinese(t)}", end="")
@@ -2557,7 +2561,7 @@ def main(
                 cand_p.chi_count + cand_p.pon_count + cand_p.kong_count,
             ):
                 print(
-                    f"\n  {player_label(cand_idx)}胡！（{player_label(player)} 放槍 {n_to_chinese(discard_tile)}）"
+                    f"\n  {plabel(cand_idx)}胡！（{plabel(player)} 放槍 {n_to_chinese(discard_tile)}）"
                 )
                 _cp = m.players[cand_idx]
                 _cp.hand.append(discard_tile)   # 暫加入以便 score_hand 分析
@@ -2593,7 +2597,7 @@ def main(
                 _do_meld(m, player, cand_idx, discard_tile, [ta, tb, tc])
                 cand_p.kong_count += 1
                 print(
-                    f"\n  {player_label(cand_idx)}槓 {n_to_chinese(discard_tile)}"
+                    f"\n  {plabel(cand_idx)}槓 {n_to_chinese(discard_tile)}"
                     f"（{n_to_chinese(ta)} {n_to_chinese(tb)} {n_to_chinese(tc)}）",
                     end="",
                 )
@@ -2624,7 +2628,7 @@ def main(
                     _do_meld(m, player, cand_idx, discard_tile, [ta, tb])
                     cand_p.pon_count += 1
                     print(
-                        f"\n  {player_label(cand_idx)}碰 {n_to_chinese(discard_tile)}"
+                        f"\n  {plabel(cand_idx)}碰 {n_to_chinese(discard_tile)}"
                         f"（{n_to_chinese(ta)} {n_to_chinese(tb)}）",
                         end="",
                     )
@@ -2693,7 +2697,7 @@ def main(
                     _do_meld(m, player, next_idx, discard_tile, [chosen_ta, chosen_tb])
                     np.chi_count += 1
                     print(
-                        f"\n  {player_label(next_idx)}吃 {n_to_chinese(discard_tile)}"
+                        f"\n  {plabel(next_idx)}吃 {n_to_chinese(discard_tile)}"
                         f"（{n_to_chinese(chosen_ta)} {n_to_chinese(chosen_tb)}）",
                         end="",
                     )

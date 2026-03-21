@@ -1504,7 +1504,11 @@ def score_hand(
     if winner == dealer_idx:
         result.append(("莊家", 1))
     if consecutive >= 1:
-        result.append(("拉莊", consecutive * 2))
+        if winner == dealer_idx:
+            result.append(("拉莊", consecutive * 2))
+        elif is_tsumo or (pao_idx is not None and pao_idx == dealer_idx):
+            result.append(("拉莊", 1 + consecutive * 2))
+        # else: 非莊家放槍，不加拉莊
     if not is_tsumo and pao_idx is not None and pao_idx == dealer_idx:
         result.append(("莊家放槍", 1))
 

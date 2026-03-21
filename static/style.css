@@ -137,6 +137,12 @@ body {
   text-transform: uppercase;
 }
 
+/* ── 左右側區（上家/下家）往上靠 ── */
+#zone-left, #zone-right {
+  justify-content: flex-start;
+  padding-top: 8%;
+}
+
 /* ── 中央區 ── */
 #zone-center {
   display: flex;

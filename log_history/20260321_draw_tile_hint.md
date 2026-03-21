@@ -6,11 +6,12 @@
 ## 任務清單
 
 ### Task 1：mahjong.py — main() 人類摸牌後印出「你摸 X」
-- [/] 檔案範圍：`mahjong.py`（main() 函式，摸牌段落約 line 2458 附近）
+- [v] 檔案範圍：`mahjong.py`（main() 函式，摸牌段落約 line 2458 附近）
 - 摘要：
   在正常摸牌流程（非 skip_draw）判斷補花後，若 player == HUMAN_PLAYER，
   印出「\n你摸 {n_to_chinese(drawn)}」（補花牌直接顯示最終摸入牌，
   不另外說明補花過程，補花訊息已由現有 print 負責）
+- Commit 5a7ca3e：feat(mahjong): 終端機版人類摸牌後顯示「你摸 X」提示
 
 ## 驗收條件
 - 終端機執行後，人類輪次顯示「你摸 X牌」，隨後顯示手牌供選擇出牌

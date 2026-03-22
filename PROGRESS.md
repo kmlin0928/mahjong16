@@ -3,13 +3,14 @@
 ## 任務清單
 
 ### Task 1：mahjong.py — 網頁版 _game_loop 補齊放槍牌名
-- [/] 檔案範圍：`mahjong.py`（_game_loop，line ~2217）
+- [v] 檔案範圍：`mahjong.py`（_game_loop，line ~2217）
+  - f88c5dd feat(mahjong): 網頁版放槍胡訊息補充胡牌牌名
 - 摘要：
   ron 訊息從 `XX胡！（YY 放槍）`
   改為 `XX胡 牌！（YY 放槍）`，加入胡牌的牌名
 
 ### Task 2：mahjong.py — 網頁版 _game_loop 補齊搶槓胡資訊
-- [ ] 檔案範圍：`mahjong.py`（_game_loop，line ~2117）
+- [/] 檔案範圍：`mahjong.py`（_game_loop，line ~2117）
 - 摘要：
   搶槓胡訊息從 `XX搶槓胡！`
   改為 `XX搶槓胡 牌！（YY 加槓）`，加入牌名與加槓者

@@ -2114,7 +2114,7 @@ class GameSession:
                                         tenhou_label=tenhou_flags.get(rob_idx, ""),
                                         pao_idx=player,
                                     )
-                                    self._L(f"{plabel(rob_idx)}搶槓胡！")
+                                    self._L(f"{plabel(rob_idx)}搶槓胡 {n_to_chinese(drawn)}！（{plabel(player)} 加槓）")
                                     return self._snapshot(m, "game_over", winner=plabel(rob_idx), scores=_sc)
                                     robbed = True
                         if not robbed and m.remain:

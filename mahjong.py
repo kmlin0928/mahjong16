@@ -2214,7 +2214,7 @@ class GameSession:
                         pao_idx=player,
                     )
                     cand_p.hand.pop()
-                    self._L(f"{plabel(cand_idx)}胡！（{plabel(player)} 放槍）")
+                    self._L(f"{plabel(cand_idx)}胡 {n_to_chinese(discard_tile)}！（{plabel(player)} 放槍）")
                     return self._snapshot(m, "game_over", winner=plabel(cand_idx), scores=_sc)
 
             # ── 明槓 ──────────────────────────────────────────────────

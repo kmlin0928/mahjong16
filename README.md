@@ -373,3 +373,54 @@ findPair / find_pair  ──→  suited[]（數牌分佈）
 - **Python 網頁版**：支援人機對戰（你為東家，其餘三家 AI）；支援吃／碰／槓／胡提示
 - 不計算番數或積分（台數僅供顯示，不影響積分累計）
 - 每次執行結果隨機
+
+---
+
+## Claude Code 整合（`.github/workflows/claude.yml`）
+
+本專案整合了 [Claude Code Action](https://github.com/anthropics/claude-code-action)，可在 GitHub Issues 與 Pull Requests 中透過 `@claude` 標記呼叫 AI 協助。
+
+### 觸發條件
+
+以下事件發生時，若內容包含 `@claude`，workflow 即會啟動：
+
+| 事件 | 說明 |
+|------|------|
+| `issue_comment` | Issue 留言中含 `@claude` |
+| `pull_request_review_comment` | PR 行內留言中含 `@claude` |
+| `pull_request_review` | PR Review 整體留言中含 `@claude` |
+| `issues` (opened / assigned) | Issue 標題或內文含 `@claude` |
+
+### 權限設定
+
+| 權限 | 層級 | 用途 |
+|------|------|------|
+| `contents: write` | 寫入 | 允許 Claude 提交並推送程式碼變更 |
+| `pull-requests: read` | 讀取 | 讀取 PR 內容與差異 |
+| `issues: read` | 讀取 | 讀取 Issue 內容 |
+| `id-token: write` | 寫入 | OIDC 身份驗證 |
+| `actions: read` | 讀取 | 讀取 CI 執行結果（用於 PR 上下文） |
+
+### 使用方式
+
+在任何 Issue 或 PR 留言中輸入 `@claude` 加上指示，例如：
+
+```
+@claude 請檢視這段程式碼並說明潛在問題
+@claude 幫我修正 AI.go 中的 decidePlay 函式
+@claude 幫我在 README.md 加入這個功能的說明
+```
+
+### 工具限制
+
+目前 `claude_args` 設定僅開放以下工具：
+
+```
+--allowedTools Read,Write,Edit
+```
+
+Claude 可讀取、建立與修改檔案，但無法執行 shell 指令（`go build` / `go run` 等）。如需開放更多工具，請修改 `.github/workflows/claude.yml` 中的 `claude_args` 參數。
+
+### 前置需求
+
+需在 Repository Secrets 中設定 `CLAUDE_CODE_OAUTH_TOKEN`（Claude Code OAuth Token）。詳見 [claude-code-action 設定說明](https://github.com/anthropics/claude-code-action)。

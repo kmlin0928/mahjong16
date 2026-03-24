@@ -22,35 +22,18 @@ go build .    # 編譯為執行檔
 
 ## 程式架構
 
-原始碼分成四個職責明確的檔案：
-
-| 檔案 | 職責 |
-|------|------|
-| [server.go](server.go) | `Server` 型別定義、`NewServer()`、`nToChinese()` 牌號顯示 |
-| [random.go](random.go) | 所有隨機性操作：洗牌、發牌、補花、隨機打牌索引 |
-| [AI.go](AI.go) | AI 決策、聽牌計算、胡牌判定演算法 |
-| [client.go](client.go) | `Player` 型別、打牌邏輯（手動／AI）、主遊戲迴圈 |
+所有程式碼位於單一檔案 [mahjong.go](mahjong.go)。
 
 ### 型別
 
-| 型別 | 所在檔案 | 說明 |
-|------|----------|------|
-| `Server` | [server.go](server.go) | 遊戲伺服器：手牌張數、剩餘牌堆、海底 |
-| `Player` | [client.go](client.go) | 玩家狀態：手牌、桌面牌（花）、已見牌統計、打牌機率、聽牌清單 |
+| 型別 | 說明 |
+|------|------|
+| `Mahjong` | 遊戲主體：手牌張數、剩餘牌堆、海底 |
+| `Player` | 玩家狀態：手牌、桌面牌（花）、已見牌統計、打牌機率、聽牌清單 |
 
 ### 手動打牌
 
-若想讓某位玩家改為手動操作，將 [client.go](client.go) 主迴圈中對應的
-
-```go
-n := p.playAI(s)
-```
-
-替換為：
-
-```go
-n := p.playManual(s)
-```
+若想讓某位玩家改為手動操作，可在 [mahjong.go](mahjong.go) 主迴圈中加入標準輸入互動，目前版本為全 AI 自動對局。
 
 ### 牌號編碼
 
@@ -67,27 +50,24 @@ n := p.playManual(s)
 
 ### 主要函式
 
-| 函式 | 檔案 | 說明 |
-|------|------|------|
-| `NewServer(nHand)` | [server.go](server.go) | 建立遊戲伺服器，呼叫 `Shuffle()` 初始化牌堆 |
-| `nToChinese(n)` | [server.go](server.go) | 將牌號轉為中文名稱（如 `"3筒"`、`"東"`） |
-| `Shuffle()` | [random.go](random.go) | 回傳 144 張牌的隨機排列 |
-| `initDeal(players)` | [random.go](random.go) | 發初始手牌（每人 16 張） |
-| `showBonus(players)` | [random.go](random.go) | 開局補花，並初始化各玩家的已見牌記錄 |
-| `iShowBonus(p, i)` | [random.go](random.go) | 對第 `i` 張手牌遞迴補花 |
-| `deal1()` | [random.go](random.go) | 從牌堆頂抽 1 張牌 |
-| `RandomPlay(nHand)` | [random.go](random.go) | 回傳隨機打牌索引（AI 後備策略） |
-| `decidePlay(p)` | [AI.go](AI.go) | AI 決策：優先打後聽牌最多，次選最常出現的牌 |
-| `gates(p)` | [AI.go](AI.go) | 計算打出每張牌後的聽牌清單（`map[牌面]聽牌數`） |
-| `isWin(p)` | [AI.go](AI.go) | 判斷玩家是否胡牌 |
-| `isSuit(suited)` | [AI.go](AI.go) | 判斷數牌部分是否合法（遞迴，採定理一） |
-| `isHonor(honor)` | [AI.go](AI.go) | 判斷字牌部分是否合法（每種字牌須為 0 或 3 張） |
-| `sortHand(tiles)` | [AI.go](AI.go) | 複製手牌陣列並排序 |
-| `findPair(sorted, pairs)` | [AI.go](AI.go) | 找出手牌中所有可能的「眼」位置（採定理二） |
-| `initSee()` / `addSee(t)` | [client.go](client.go) | 更新玩家已見過的牌 |
-| `play(n, hand)` | [client.go](client.go) | 打出第 `n` 張，換入摸到的牌 |
-| `playAI(s)` | [client.go](client.go) | 呼叫 AI.go 自動選牌 |
-| `playManual(s)` | [client.go](client.go) | 顯示手牌並讓使用者輸入選擇 |
+| 函式 | 說明 |
+|------|------|
+| `nToChinese(n)` | 將牌號轉為中文名稱（如 `"3筒"`、`"東"`） |
+| `deal1()` | 從牌堆頂抽 1 張牌 |
+| `initDeal()` | 洗牌並發初始手牌（每人 16 張） |
+| `showBonus()` | 開局補花，並初始化各玩家的已見牌記錄 |
+| `iShowBonus(p, i)` | 對第 `i` 張手牌遞迴補花 |
+| `initSee(p)` | 初始化玩家已見牌記錄 |
+| `addSee(t)` | 更新玩家已見過的牌 |
+| `decidePlay(p)` | AI 決策：優先打後聽牌最多，次選最常出現的牌 |
+| `play(n, hand)` | 打出第 `n` 張，換入摸到的牌 |
+| `gates(p)` | 計算打出每張牌後的聽牌清單（`map[牌面]聽牌數`） |
+| `isWin(p)` | 判斷玩家是否胡牌 |
+| `isSuit(suited)` | 判斷數牌部分是否合法（遞迴，採定理一） |
+| `isHonor(honor)` | 判斷字牌部分是否合法（每種字牌須為 0 或 3 張） |
+| `findPair(s, pairs)` | 找出手牌中所有可能的「眼」位置（採定理二） |
+| `findSuitPair(pad, s, pairs)` | 利用模 3 餘數快速定位數牌的眼 |
+| `findHonorPair(pad, s, pairs)` | 逐一嘗試字牌的眼 |
 
 ### AI 決策邏輯（`decidePlay`）
 

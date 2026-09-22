@@ -1791,16 +1791,33 @@ def player_label(
 ) -> str:
     """回傳玩家稱謂。
 
+    三種稱謂方式：
+
+    ======================  ==========  ==================================
+    seat_winds              viewer      結果
+    ======================  ==========  ==================================
+    有值                    None        門風名稱（絕對稱謂）
+    有值                    有值        viewer 本人稱「你」，其餘為門風名稱
+    None                    任意        相對 viewer 的稱謂（你／下家／…）
+    ======================  ==========  ==================================
+
+    多人連線模式的事件流是四家共讀的，**不能**有「你」這種因人而異的稱謂，
+    所以不傳 viewer；單人模式只有一位真人，傳 viewer 才能讓他看到「你打 1筒」
+    而不是「東打 1筒」。
+
     Args:
         player:     欲稱呼的席位（0–3）
-        seat_winds: 四家門風；有值時直接回傳門風名稱（絕對稱謂，多人連線適用）
-        viewer:     視角席位；None 時沿用模組常數 HUMAN_PLAYER
+        seat_winds: 四家門風；有值時以門風為底稱呼
+        viewer:     視角席位。``seat_winds`` 為 None 時決定相對稱謂的基準
+                    （省略則沿用模組常數 ``HUMAN_PLAYER``）；``seat_winds``
+                    有值時，只有這一席會被稱為「你」。
 
     Returns:
-        seat_winds 有值 → 門風名稱；否則為相對 viewer 的稱謂
-        （你／下家／對家／上家）。
+        該席位的稱謂字串。
     """
     if seat_winds is not None:
+        if viewer is not None and player == viewer:
+            return "你"
         return seat_winds[player]
     v = HUMAN_PLAYER if viewer is None else viewer
     if player == v:
@@ -2426,7 +2443,10 @@ class GameSession:
         else:
             _offset = _rnd.randrange(4)
             seat_winds = [_SEAT_WIND_NAMES[(_offset + i) % 4] for i in range(4)]
-        plabel = lambda p: player_label(p, seat_winds)  # noqa: E731
+        # 單人模式（只有一位真人）才用「你」；多人模式的事件流四家共讀，
+        # 因人而異的稱謂會讓別人看不懂，一律用門風。
+        _label_viewer = self._default_viewer if len(self._human_seats) == 1 else None
+        plabel = lambda p: player_label(p, seat_winds, _label_viewer)  # noqa: E731
         if self.dealer_idx_override is not None:
             dealer_idx = self.dealer_idx_override
         elif self.consecutive > 0:
@@ -2446,13 +2466,20 @@ class GameSession:
         self._seat_winds = seat_winds
         self._dealer_idx = dealer_idx
 
-        _seat_roles = "、".join(
-            f"{seat_winds[s]}{'（玩家）' if s in self._human_seats else '（AI）'}"
-            for s in range(4)
-        )
-        self._L(
-            f"【{game_round_wind}風{game_wind}局】莊家：{plabel(dealer_idx)}｜{_seat_roles}"
-        )
+        if _label_viewer is not None:
+            # 單人模式：沿用改版前的開場白
+            self._L(
+                f"【你是 {seat_winds[_label_viewer]}｜{game_round_wind}風{game_wind}局】"
+                f"莊家：{plabel(dealer_idx)}"
+            )
+        else:
+            _seat_roles = "、".join(
+                f"{seat_winds[s]}{'（玩家）' if s in self._human_seats else '（AI）'}"
+                for s in range(4)
+            )
+            self._L(
+                f"【{game_round_wind}風{game_wind}局】莊家：{plabel(dealer_idx)}｜{_seat_roles}"
+            )
 
         # 莊家多摸一張
         dealer_p = m.players[dealer_idx]

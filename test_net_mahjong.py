@@ -1,9 +1,9 @@
 # /// script
 # requires-python = ">=3.12"
 # dependencies = [
-#   "fastapi",
-#   "uvicorn[standard]",
-#   "websockets",
+#   "fastapi>=0.110,<1.0",
+#   "uvicorn[standard]>=0.29,<1.0",
+#   "websockets>=12,<18",
 # ]
 # ///
 """多人連線對戰模式驗收測試。
@@ -24,6 +24,11 @@
 8. 輸入驗證（ERR-1／ERR-2）：畸形的 ``discard`` / ``new_game`` 不會終止牌局。
 9. Major 修補：結構化錯誤與日誌、訊息大小／速率／連線數上限、
    start_game 互斥、對局中重開需全體同意、CLI 席位與連接埠的配對順序。
+10. Minor 收尾：稱謂模式與單人模式用語、靜態資源檢查、代打事件時機、
+    state 傳輸精簡、相依版本鎖定。
+
+非同步測試一律以 ``_run_*`` 命名，由同名的同步 ``test_*`` 包裝驅動，
+因此本檔案用 ``uv run`` 或 ``pytest`` 執行都可以。
 """
 from __future__ import annotations
 
@@ -31,8 +36,10 @@ import asyncio
 import contextlib
 import json
 import logging
+import pathlib
 import random
 import sys
+import time
 import urllib.error
 import urllib.request
 
@@ -43,8 +50,48 @@ import net_mahjong as nm
 from mahjong import GameSession
 
 HOST = "127.0.0.1"
-PORTS = {0: 18901, 1: 18902}
 TOKENS = {0: "test-token-seat0", 1: "test-token-seat1"}
+
+
+async def start_servers(table: "nm.Table", seats: list[int]) -> tuple[dict[int, int], list]:
+    """替指定席位起服務，連接埠交給作業系統配（避免 CI 平行執行撞埠）。
+
+    Args:
+        table: 共用牌桌
+        seats: 要開服務的席位
+
+    Returns:
+        (席位 → 實際連接埠, Server 物件列表)。
+    """
+    servers = []
+    for seat in seats:
+        srv = nm._SharedSignalServer(
+            nm.uvicorn.Config(nm.create_seat_app(table, seat), host=HOST,
+                              port=0, log_level="critical")
+        )
+        srv.serve_task = asyncio.create_task(srv.serve())
+        servers.append(srv)
+    ports: dict[int, int] = {}
+    for seat, srv in zip(seats, servers):
+        for _ in range(200):                  # 等 socket 真的綁定好
+            await asyncio.sleep(0.05)
+            if getattr(srv, "servers", None):
+                ports[seat] = srv.servers[0].sockets[0].getsockname()[1]
+                break
+        else:
+            raise AssertionError(f"席位 {seat} 的服務未能啟動")
+        table.seat_ports[seat] = ports[seat]
+    return ports, servers
+
+
+async def stop_servers(servers: list) -> None:
+    """關閉 start_servers 起的服務。"""
+    for srv in servers:
+        srv.should_exit = True
+    for srv in servers:
+        with contextlib.suppress(Exception):
+            await asyncio.wait_for(srv.serve_task, timeout=10)
+        srv.serve_task.cancel()
 
 
 def ws_url(seat: int, port: int, token: str | None = None) -> str:
@@ -262,51 +309,28 @@ class _Bot:
                         await ws.send(json.dumps({"cmd": "action", "action": act}))
 
 
-async def _serve(table: nm.Table, stop: asyncio.Event) -> None:
-    """在背景跑起所有席位的服務，直到 stop 被設定。"""
-    servers = [
-        nm._SharedSignalServer(
-            nm.uvicorn.Config(nm.create_seat_app(table, seat), host=HOST,
-                              port=port, log_level="error")
-        )
-        for seat, port in PORTS.items()
-    ]
-    task = asyncio.gather(*(srv.serve() for srv in servers))
-    await stop.wait()
-    for srv in servers:
-        srv.should_exit = True
-    await task
-    await table.shutdown()
-
-
 async def _run_table(quit_after: int | None) -> tuple[nm.Table, _Bot, _Bot]:
     """開一桌（席位 0、1 真人，2、3 AI），跑完後回傳結果。"""
     random.seed(42)
-    table = nm.Table(seats=[0, 1], seat_ports=PORTS, contest=True,
+    table = nm.Table(seats=[0, 1], seat_ports={0: 0, 1: 0}, contest=True,
                      disconnect_grace=1.0, afk_seconds=0.0, auto_start=True,
                      seat_tokens=dict(TOKENS))
-    stop = asyncio.Event()
-    server = asyncio.create_task(_serve(table, stop))
-    for _ in range(80):                       # 等連接埠就緒
-        await asyncio.sleep(0.05)
-        try:
-            reader, writer = await asyncio.open_connection(HOST, PORTS[0])
-        except OSError:
-            continue
-        writer.close()
-        break
-
-    bot0, bot1 = _Bot(0, PORTS[0]), _Bot(1, PORTS[1])
-    await asyncio.wait_for(
-        asyncio.gather(bot0.run(), bot1.run(quit_after=quit_after)), timeout=180)
-    if quit_after is not None:
-        await asyncio.wait_for(table._driver, timeout=180)   # 由 AI 代打跑完
-    stop.set()
-    await server
+    ports, servers = await start_servers(table, [0, 1])
+    try:
+        bot0, bot1 = _Bot(0, ports[0]), _Bot(1, ports[1])
+        await asyncio.wait_for(
+            asyncio.gather(bot0.run(), bot1.run(quit_after=quit_after)),
+            timeout=180)
+        if quit_after is not None:
+            # 席位 1 中途離線，剩下的由 AI 代打跑完
+            await table.wait_game_over(timeout=180)
+    finally:
+        await stop_servers(servers)
+        await table.shutdown()
     return table, bot0, bot1
 
 
-async def test_end_to_end() -> None:
+async def _run_end_to_end() -> None:
     """兩位真人玩家透過各自的連接埠打完一盤，並驗證離線代打。"""
     table, bot0, bot1 = await _run_table(quit_after=None)
     assert bot0.hello is not None and bot0.hello["seat"] == 0
@@ -321,10 +345,10 @@ async def test_end_to_end() -> None:
           f"結果 {bot0.states[-1]['winner'] or '和局'}")
 
     table, _, _ = await _run_table(quit_after=3)
-    assert table._driver.done()
-    assert table._session is not None
-    assert table._session.view(1).phase == "game_over"
-    takeover = [l for l in table._session.events(0, 1) if "代打" in l]
+    assert not table.game_running, "離線代打跑完後不該還有牌局在進行"
+    assert table.session is not None
+    assert table.session.view(1).phase == "game_over"
+    takeover = [l for l in table.session.events(0, 1) if "代打" in l]
     assert takeover, "離線後未出現 AI 代打事件"
     print(f"  離線代打：{takeover[0]}")
 
@@ -333,34 +357,22 @@ async def test_end_to_end() -> None:
 # 7. 存取控制（SEC-1 席位 token、SEC-2 Origin 檢查）
 # ---------------------------------------------------------------------------
 
-SEC_PORT = 18911
 SEC_TOKEN = "sec-token-seat0"
 
 
 @contextlib.asynccontextmanager
-async def _one_seat_server(port: int, token: str, **table_kw):
-    """開一個單席位的服務供存取控制測試使用，離開時關閉。"""
-    table = nm.Table(seats=[0], seat_ports={0: port}, contest=True,
+async def _one_seat_server(token: str, **table_kw):
+    """開一個單席位的服務供存取控制測試使用，離開時關閉。
+
+    連接埠交給作業系統配，實際埠號由 ``table.seat_ports[0]`` 取得。
+    """
+    table = nm.Table(seats=[0], seat_ports={0: 0}, contest=True,
                      auto_start=False, seat_tokens={0: token}, **table_kw)
-    srv = nm._SharedSignalServer(
-        nm.uvicorn.Config(nm.create_seat_app(table, 0), host=HOST, port=port,
-                          log_level="critical")
-    )
-    task = asyncio.create_task(srv.serve())
-    for _ in range(100):                      # 等連接埠就緒
-        await asyncio.sleep(0.05)
-        try:
-            _, writer = await asyncio.open_connection(HOST, port)
-        except OSError:
-            continue
-        writer.close()
-        break
+    _, servers = await start_servers(table, [0])
     try:
         yield table
     finally:
-        task.cancel()
-        with contextlib.suppress(asyncio.CancelledError):
-            await task
+        await stop_servers(servers)
         await table.shutdown()
 
 
@@ -407,28 +419,29 @@ def _http(port: int, path: str, cookie: str | None = None) -> tuple[int, str, st
         return exc.code, exc.read().decode(), exc.headers.get("set-cookie")
 
 
-async def test_seat_token() -> None:
+async def _run_seat_token() -> None:
     """SEC-1：沒有正確 token 就拿不到席位，連 HTTP 主頁都進不去。"""
-    async with _one_seat_server(SEC_PORT, SEC_TOKEN):
-        base = f"ws://{HOST}:{SEC_PORT}/ws"
+    async with _one_seat_server(SEC_TOKEN) as table:
+        port = table.seat_ports[0]
+        base = f"ws://{HOST}:{port}/ws"
         assert await _ws_rejected(base), "無 token 的 WebSocket 應被拒絕"
         assert await _ws_rejected(f"{base}?t=wrong"), "錯誤 token 應被拒絕"
         assert await _ws_rejected(f"{base}?t="), "空 token 應被拒絕"
         assert not await _ws_rejected(f"{base}?t={SEC_TOKEN}"), "正確 token 應被接受"
 
         # HTTP 端點同樣需要 token
-        status, body, _ = await asyncio.to_thread(_http, SEC_PORT, "/")
+        status, body, _ = await asyncio.to_thread(_http, port, "/")
         assert status == 401, f"GET / 無 token 應回 401，實得 {status}"
         status, _, cookie = await asyncio.to_thread(
-            _http, SEC_PORT, f"/?t={SEC_TOKEN}")
+            _http, port, f"/?t={SEC_TOKEN}")
         assert status == 200, f"GET / 帶 token 應回 200，實得 {status}"
         assert cookie is not None and "HttpOnly" in cookie, f"cookie 未設或未加 HttpOnly：{cookie}"
         assert "samesite=strict" in cookie.lower(), f"cookie 缺 SameSite=Strict：{cookie}"
 
-        status, body, _ = await asyncio.to_thread(_http, SEC_PORT, "/seat")
+        status, body, _ = await asyncio.to_thread(_http, port, "/seat")
         assert status == 401, f"GET /seat 無 token 應回 401，實得 {status}"
         status, body, _ = await asyncio.to_thread(
-            _http, SEC_PORT, "/seat", f"{nm.seat_cookie_name(0)}={SEC_TOKEN}")
+            _http, port, "/seat", f"{nm.seat_cookie_name(0)}={SEC_TOKEN}")
         assert status == 200 and json.loads(body)["seat"] == 0, body
 
         # 瀏覽器實際走的路徑：WS 不帶 query token，只帶先前存下的 cookie
@@ -438,7 +451,7 @@ async def test_seat_token() -> None:
     print("  無／錯 token 一律被拒；正確 token 與 cookie 皆可進入")
 
 
-async def test_origin_check() -> None:
+async def _run_origin_check() -> None:
     """SEC-2：Origin 與 Host 不符的 WebSocket 握手應被拒（CSWSH）。"""
     # 先單測純函式，避免只靠端到端
     assert nm.origin_allowed(None, "127.0.0.1:8001"), "無 Origin 的非瀏覽器客戶端應放行"
@@ -448,8 +461,8 @@ async def test_origin_check() -> None:
     assert not nm.origin_allowed("null", "127.0.0.1:8001"), "sandbox iframe 的 null 應被拒"
     assert not nm.origin_allowed("javascript:alert(1)", "127.0.0.1:8001")
 
-    async with _one_seat_server(SEC_PORT + 1, SEC_TOKEN):
-        port = SEC_PORT + 1
+    async with _one_seat_server(SEC_TOKEN) as table:
+        port = table.seat_ports[0]
         url = f"ws://{HOST}:{port}/ws?t={SEC_TOKEN}"
         assert await _ws_rejected(
             url, additional_headers={"Origin": "http://evil.example.com"}
@@ -607,15 +620,14 @@ class _ProbeClient:
         return None
 
 
-async def test_malformed_input_does_not_kill_table() -> None:
+async def _run_malformed_input_does_not_kill_table() -> None:
     """ERR-1／ERR-2：畸形訊息只回錯給送出者，牌局照常進行。
 
     這是修補前最嚴重的問題：任何一位玩家（或前端的一個 bug）送出一則畸形
     訊息，就會讓 driver task 死亡、四個人的牌局一起報銷。
     """
-    port = SEC_PORT + 2
-    async with _one_seat_server(port, SEC_TOKEN) as table:
-        async with _ProbeClient(port, SEC_TOKEN) as c:
+    async with _one_seat_server(SEC_TOKEN) as table:
+        async with _ProbeClient(table.seat_ports[0], SEC_TOKEN) as c:
             state = await c.start_and_wait("human_discard")
             assert state is not None, "未進入出牌階段"
             hand_size = len(state["your_hand"])
@@ -637,7 +649,7 @@ async def test_malformed_input_does_not_kill_table() -> None:
                 replies = await c.send({"cmd": "discard", "idx": bad})
                 errs = [r for r in replies if r["t"] == "error"]
                 assert errs, f"discard {label}（{bad!r}）應回報錯誤，實得 {replies}"
-                assert not table._driver.done(), f"discard {label} 讓牌局死亡"
+                assert table.game_running, f"discard {label} 讓牌局死亡"
 
             bad_actions = [
                 ("chi:99", "吃牌索引越界"),
@@ -649,7 +661,7 @@ async def test_malformed_input_does_not_kill_table() -> None:
                 replies = await c.send({"cmd": "action", "action": bad})
                 assert [r for r in replies if r["t"] == "error"], \
                     f"action {label}（{bad!r}）應回報錯誤"
-                assert not table._driver.done(), f"action {label} 讓牌局死亡"
+                assert table.game_running, f"action {label} 讓牌局死亡"
 
             bad_games = [
                 {"cmd": "new_game", "dealer_idx": 99},
@@ -661,17 +673,17 @@ async def test_malformed_input_does_not_kill_table() -> None:
                 replies = await c.send(payload)
                 assert [r for r in replies if r["t"] == "error"], \
                     f"{payload} 應回報錯誤"
-                assert not table._driver.done(), f"{payload} 讓牌局死亡"
+                assert table.game_running, f"{payload} 讓牌局死亡"
 
             # 非 JSON 物件的訊息也要有禮貌地回錯，而不是把連線炸掉
             replies = await c.send([1, 2, 3])
             assert [r for r in replies if r["t"] == "error"], "JSON 陣列應回報錯誤"
 
             # 最重要的驗收：以上全部之後，牌局仍在原地等同一位玩家出牌
-            assert not table._driver.done(), "牌局不該因為畸形輸入而終止"
-            assert table._session is not None
-            assert table._session.current_seat == 0
-            assert table._session.current_phase == "human_discard"
+            assert table.game_running, "牌局不該因為畸形輸入而終止"
+            assert table.session is not None
+            assert table.session.current_seat == 0
+            assert table.session.current_phase == "human_discard"
 
             # 合法出牌仍然成功
             replies = await c.send({"cmd": "discard", "idx": 0})
@@ -710,7 +722,7 @@ def test_error_payload_shape() -> None:
     print("  err_payload 帶 code / message / 附加欄位")
 
 
-async def test_safe_send_logs_unexpected(capture_logs: "list[str]") -> None:
+async def _run_safe_send_logs_unexpected(capture_logs: "list[str]") -> None:
     """ERR-4：_safe_send 只靜默吞斷線例外，其餘寫入日誌。"""
     table = nm.Table(seats=[0], seat_ports={0: 1}, contest=True, auto_start=False)
 
@@ -729,7 +741,7 @@ async def test_safe_send_logs_unexpected(capture_logs: "list[str]") -> None:
     print("  斷線靜默、序列化錯誤寫日誌")
 
 
-async def test_start_game_mutex() -> None:
+async def _run_start_game_mutex() -> None:
     """ERR-5：同時 new_game 只會留下一個 driver task。"""
 
     class _SlowWS:
@@ -767,11 +779,10 @@ async def test_start_game_mutex() -> None:
     print("  同時 new_game 後仍只有 1 個 driver task")
 
 
-async def test_message_intake() -> None:
+async def _run_message_intake() -> None:
     """ERR-3 / SEC-4：畸形、超長、超頻的訊息都被結構化錯誤擋下且不斷線。"""
-    port = SEC_PORT + 10
-    async with _one_seat_server(port, SEC_TOKEN):
-        async with _ProbeClient(port, SEC_TOKEN) as c:
+    async with _one_seat_server(SEC_TOKEN) as table:
+        async with _ProbeClient(table.seat_ports[0], SEC_TOKEN) as c:
             cases = [
                 ("這不是 JSON", nm.ERR_BAD_JSON, "非 JSON 文字"),
                 ("[1,2,3]", nm.ERR_BAD_SHAPE, "JSON 陣列"),
@@ -805,14 +816,13 @@ async def test_message_intake() -> None:
             print(f"  連送 {nm.MSG_RATE_LIMIT + 5} 則後觸發 rate_limited（{len(limited)} 則）")
 
 
-async def test_conn_limit() -> None:
+async def _run_conn_limit() -> None:
     """SEC-4：每席連線數達上限後拒絕新連線。"""
-    port = SEC_PORT + 11
     original = nm.MAX_CONNS_PER_SEAT
     nm.MAX_CONNS_PER_SEAT = 2
     try:
-        async with _one_seat_server(port, SEC_TOKEN):
-            url = f"ws://{HOST}:{port}/ws?t={SEC_TOKEN}"
+        async with _one_seat_server(SEC_TOKEN) as table:
+            url = f"ws://{HOST}:{table.seat_ports[0]}/ws?t={SEC_TOKEN}"
             opened = [await websockets.connect(url) for _ in range(2)]
             try:
                 assert await _ws_rejected(url), "第 3 條連線應被拒絕"
@@ -827,14 +837,11 @@ async def test_conn_limit() -> None:
     print("  每席上限 2 條：第 3 條被拒，釋出後可再連")
 
 
-async def test_restart_requires_consensus() -> None:
+async def _run_restart_requires_consensus() -> None:
     """DES-1：對局中重開需所有在線真人同意；未開局時直接開局。"""
-    ports = {0: SEC_PORT + 12, 1: SEC_PORT + 13}
-    table = nm.Table(seats=[0, 1], seat_ports=ports, contest=True,
+    table = nm.Table(seats=[0, 1], seat_ports={0: 0, 1: 0}, contest=True,
                      auto_start=False, seat_tokens=dict(TOKENS))
-    stop = asyncio.Event()
-    server = asyncio.create_task(_serve_ports(table, ports, stop))
-    await _wait_port(HOST, ports[0])
+    ports, servers = await start_servers(table, [0, 1])
     try:
         async with _ProbeClient(ports[0], TOKENS[0]) as c0, \
                    _ProbeClient(ports[1], TOKENS[1]) as c1:
@@ -849,50 +856,252 @@ async def test_restart_requires_consensus() -> None:
                        and r["v"]["code"] == nm.ERR_RESTART_PENDING]
             assert pending, f"對局中單方 new_game 應回 restart_pending，實得 {replies}"
             assert table._driver is first_driver, "單方提議不該重開牌局"
-            assert table._restart_votes == {0}, table._restart_votes
+            assert table.restart_votes == [0], table.restart_votes
 
             # 3) 另一家也同意 → 重開
             await c1.send({"cmd": "new_game"}, timeout=4.0)
             await asyncio.sleep(0.5)
             assert table._driver is not first_driver, "全體同意後應重開"
-            assert not table._restart_votes, "重開後計票應清空"
+            assert not table.restart_votes, "重開後計票應清空"
             assert first_driver.cancelled() or first_driver.done(), "舊 driver 應被取消"
         print("  未開局直接開；對局中需 2/2 同意才重開")
     finally:
-        stop.set()
-        with contextlib.suppress(Exception):
-            await asyncio.wait_for(server, timeout=10)
+        await stop_servers(servers)
         await table.shutdown()
 
 
-async def _wait_port(host: str, port: int) -> None:
-    """等連接埠就緒。"""
-    for _ in range(100):
-        await asyncio.sleep(0.05)
+# ---------------------------------------------------------------------------
+# 10. Minor 收尾（ERR-6 / ERR-7 / Q-2 / Q-4 / Q-6 / Q-7 / Q-8）
+# ---------------------------------------------------------------------------
+
+def test_player_label_modes() -> None:
+    """Q-4：player_label 的三種稱謂方式都成立（不再是死參數）。"""
+    winds = ["東", "南", "西", "北"]
+    assert mahjong.player_label(2, winds) == "西", "只給門風 → 絕對稱謂"
+    assert mahjong.player_label(2, winds, viewer=2) == "你", "viewer 本人 → 你"
+    assert mahjong.player_label(3, winds, viewer=2) == "北", "他家 → 門風"
+    assert mahjong.player_label(3, None, viewer=2) == "下家", "不給門風 → 相對稱謂"
+    print("  絕對／半絕對／相對三種稱謂皆正確")
+
+
+def test_single_player_wording() -> None:
+    """Q-7：單人模式的事件文字回到「你打 X」，多人模式維持門風。"""
+    random.seed(3)
+    solo = GameSession(contest=True)
+    state = solo.start()
+    while state.phase != "game_over":
+        state = solo.respond(solo.ai_suggestion())
+    solo_events = solo.events(0, 0)
+    assert any(e.startswith("你打") for e in solo_events), \
+        f"單人模式應出現「你打」，實際：{solo_events[:5]}"
+    assert any(e.startswith("【你是 ") for e in solo_events), \
+        f"單人模式開場白應含「你是」，實際：{solo_events[0]}"
+
+    random.seed(3)
+    multi = GameSession(contest=True, human_seats=[0, 2])
+    state = multi.start()
+    while state.phase != "game_over":
+        state = multi.respond(multi.ai_suggestion())
+    multi_events = multi.events(0, 0)
+    assert not [e for e in multi_events if e.startswith("你")], \
+        "多人模式的事件流四家共讀，不該有因人而異的「你」"
+    print("  單人模式「你打 X」已恢復，多人模式仍為門風")
+
+
+async def _run_takeover_timeout_calc() -> None:
+    """Q-2：代打期限是算出來的，不再固定每 0.5 秒醒來輪詢。"""
+    table = nm.Table(seats=[0], seat_ports={0: 1}, contest=True,
+                     disconnect_grace=15.0, afk_seconds=0.0, auto_start=False)
+    now = 1000.0
+    # 在線且未設發呆時限 → 沒有任何期限，應一直睡到有事發生
+    assert table._takeover_timeout(0, now) is None
+
+    # 設了發呆時限 → 期限為剩餘秒數
+    table.afk_seconds = 60.0
+    loop = asyncio.get_running_loop()
+    table._pending = nm.Pending(seat=0, future=loop.create_future(), since=now - 10)
+    assert abs(table._takeover_timeout(0, now) - 50.0) < 1e-6
+
+    # 離線 → 取離線寬限與發呆時限的較早者
+    table._offline_since[0] = now - 5
+    assert abs(table._takeover_timeout(0, now) - 10.0) < 1e-6, "應取較早的離線期限"
+
+    # 期限已過 → 0（立刻處理，不回負數）
+    table._offline_since[0] = now - 100
+    assert table._takeover_timeout(0, now) == 0.0
+    table._pending = None
+    print("  在線無期限 → None；離線/發呆取較早者；逾期夾到 0")
+
+
+def test_takeover_timeout_calc() -> None:
+    """Q-2 的同步包裝。"""
+    asyncio.run(_run_takeover_timeout_calc())
+
+
+async def _run_takeover_note_timing() -> None:
+    """ERR-6：玩家在 AI 思考的空檔回應時，不該留下「改由 AI 代打」。"""
+    random.seed(4)
+    table = nm.Table(seats=[0], seat_ports={0: 1}, contest=True,
+                     auto_start=False)
+    session = GameSession(contest=True, human_seats=[0])
+    session.start()
+    table._session = session
+
+    real_suggestion = session.ai_suggestion
+
+    def slow_suggestion():
+        time.sleep(0.3)               # 模擬 AI 思考期間（跑在 to_thread 裡）
+        return real_suggestion()
+
+    session.ai_suggestion = slow_suggestion       # type: ignore[method-assign]
+    fut: asyncio.Future = asyncio.get_running_loop().create_future()
+    before = len(session.events(0, 0))
+    task = asyncio.create_task(table._takeover(fut, 0, "離線"))
+    await asyncio.sleep(0.05)
+    fut.set_result("0")                            # 玩家趕在 AI 算完前回應
+    await task
+
+    assert fut.result() == "0", "應保留玩家自己的回應"
+    added = session.events(before, 0)
+    assert not [e for e in added if "代打" in e], \
+        f"玩家已回應時不該寫入代打事件：{added}"
+    print("  玩家搶在 AI 前回應 → 不留下「改由 AI 代打」事件")
+
+
+def test_takeover_note_timing() -> None:
+    """ERR-6 的同步包裝。"""
+    asyncio.run(_run_takeover_note_timing())
+
+
+def test_static_dir_check() -> None:
+    """ERR-7：啟動時檢查靜態資源，缺檔直接失敗而非等玩家連上才 500。"""
+    nm.check_static_dir()                          # 本 repo 應通過
+
+    original = nm.STATIC_DIR
+    nm.STATIC_DIR = original.parent / "static-does-not-exist"
+    try:
+        nm.check_static_dir()
+    except SystemExit as exc:
+        assert "找不到前端目錄" in str(exc), exc
+    else:
+        raise AssertionError("缺少 static 目錄時應直接失敗")
+    finally:
+        nm.STATIC_DIR = original
+    print("  static 目錄缺失時啟動即失敗")
+
+
+async def _run_missing_index_returns_404() -> None:
+    """ERR-7：index.html 缺檔時回 404（語意正確）而不是 500。"""
+    async with _one_seat_server(SEC_TOKEN) as table:
+        port = table.seat_ports[0]
+        original = nm.INDEX_HTML
+        nm.INDEX_HTML = original.parent / "index-does-not-exist.html"
         try:
-            _, writer = await asyncio.open_connection(host, port)
-        except OSError:
-            continue
-        writer.close()
-        return
+            with _captured_logs():          # 這裡本來就該記 error，別污染輸出
+                status, body, _ = await asyncio.to_thread(
+                    _http, port, f"/?t={SEC_TOKEN}")
+            assert status == 404, f"缺檔應回 404，實得 {status}"
+            assert "static_missing" in body, body
+        finally:
+            nm.INDEX_HTML = original
+        status, _, _ = await asyncio.to_thread(_http, port, f"/?t={SEC_TOKEN}")
+        assert status == 200, "檔案還在時應正常回 200"
+    print("  index.html 缺檔回 404，檔案存在時回 200")
 
 
-async def _serve_ports(table: nm.Table, ports: dict[int, int],
-                       stop: asyncio.Event) -> None:
-    """在背景跑起指定席位的服務，直到 stop 被設定。"""
-    servers = [
-        nm._SharedSignalServer(
-            nm.uvicorn.Config(nm.create_seat_app(table, seat), host=HOST,
-                              port=port, log_level="critical")
-        )
-        for seat, port in ports.items()
-    ]
-    task = asyncio.gather(*(srv.serve() for srv in servers))
-    await stop.wait()
-    for srv in servers:
-        srv.should_exit = True
-    with contextlib.suppress(Exception):
-        await asyncio.wait_for(task, timeout=10)
+def test_missing_index_returns_404() -> None:
+    """ERR-7 的同步包裝。"""
+    asyncio.run(_run_missing_index_returns_404())
+
+
+async def _run_state_payload_omits_log() -> None:
+    """Q-6：連線模式的 state 不再重複帶事件文字（事件走 log 推送）。"""
+    async with _one_seat_server(SEC_TOKEN) as table:
+        async with _ProbeClient(table.seat_ports[0], SEC_TOKEN) as c:
+            replies = await c.send({"cmd": "new_game"}, timeout=3.0)
+            states = [r["v"] for r in replies if r["t"] == "state"]
+            logs = [r["v"] for r in replies if r["t"] == "log"]
+            assert states, "應收到盤面"
+            assert logs, "應收到事件文字"
+            for st in states:
+                assert st["log"] == [], f"連線模式的 state.log 應為空：{st['log']}"
+            assert any("局】" in line for line in logs), logs[:3]
+    print(f"  state.log 已清空，事件改走 log 推送（{len(logs)} 則）")
+
+
+def test_state_payload_omits_log() -> None:
+    """Q-6 的同步包裝。"""
+    asyncio.run(_run_state_payload_omits_log())
+
+
+def test_dependency_pins() -> None:
+    """Q-8：PEP 723 相依都帶版本區間，避免上游改介面時無聲爆掉。"""
+    import re
+    for name in ("net_mahjong.py", "web_mahjong.py", "test_net_mahjong.py"):
+        header = pathlib.Path(name).read_text().split("# ///")[1]
+        deps = re.findall(r'"([^"]+)"', header)
+        assert deps, f"{name} 未宣告相依"
+        for dep in deps:
+            assert re.search(r"[<>=]", dep), f"{name} 的相依未鎖版本：{dep}"
+    # uvicorn 的訊號處理仍是可覆寫的（否則 Ctrl-C 只會關掉一個埠）
+    assert any(hasattr(nm.uvicorn.Server, h)
+               for h in nm._SharedSignalServer._SIGNAL_HOOKS), \
+        "uvicorn 已移除訊號處理掛鉤，_SharedSignalServer 需要更新"
+    print("  三個檔案的相依皆有版本區間；uvicorn 訊號掛鉤仍存在")
+
+
+# ---------------------------------------------------------------------------
+# 同步包裝：讓 pytest 也能直接收集執行
+#
+# 非同步的 test_* 被 pytest 收集時，若沒有 pytest-asyncio 會「不執行卻算通過」
+# （只留下 coroutine never awaited 警告），是最糟的假綠燈。因此非同步測試一律
+# 以 _run_* 命名，再由這裡的同步 test_* 包裝驅動。
+# ---------------------------------------------------------------------------
+
+def test_end_to_end() -> None:
+    """端到端：兩位真人各自連線打完一盤，並驗證離線代打。"""
+    asyncio.run(_run_end_to_end())
+
+
+def test_seat_token() -> None:
+    """SEC-1：席位 token 驗證。"""
+    asyncio.run(_run_seat_token())
+
+
+def test_origin_check() -> None:
+    """SEC-2：WebSocket 握手的 Origin 檢查。"""
+    asyncio.run(_run_origin_check())
+
+
+def test_malformed_input_does_not_kill_table() -> None:
+    """ERR-1／ERR-2：畸形訊息不會終止牌局。"""
+    asyncio.run(_run_malformed_input_does_not_kill_table())
+
+
+def test_safe_send_logs_unexpected() -> None:
+    """ERR-4：_safe_send 只靜默吞斷線例外。"""
+    with _captured_logs() as lines:
+        asyncio.run(_run_safe_send_logs_unexpected(lines))
+
+
+def test_start_game_mutex() -> None:
+    """ERR-5：同時 new_game 只留一個 driver。"""
+    asyncio.run(_run_start_game_mutex())
+
+
+def test_message_intake() -> None:
+    """ERR-3／SEC-4：訊息入口的型別、大小與速率檢查。"""
+    asyncio.run(_run_message_intake())
+
+
+def test_conn_limit() -> None:
+    """SEC-4：每席連線數上限。"""
+    asyncio.run(_run_conn_limit())
+
+
+def test_restart_requires_consensus() -> None:
+    """DES-1：對局中重開需全體同意。"""
+    asyncio.run(_run_restart_requires_consensus())
 
 
 # ---------------------------------------------------------------------------
@@ -911,24 +1120,32 @@ def main() -> int:
     print("[5] CLI 參數")
     test_cli_args()
     print("[6] 端到端連線對局")
-    asyncio.run(test_end_to_end())
+    test_end_to_end()
     print("[7] 存取控制（席位 token／Origin）")
-    asyncio.run(test_seat_token())
-    asyncio.run(test_origin_check())
+    test_seat_token()
+    test_origin_check()
     print("[8] 輸入驗證（discard 索引／new_game 參數）")
     test_engine_param_validation()
     test_engine_response_validation()
     test_new_game_option_validation()
-    asyncio.run(test_malformed_input_does_not_kill_table())
+    test_malformed_input_does_not_kill_table()
     print("[9] Major 修補（錯誤處理／資源上限／重開授權／CLI）")
     test_seats_ports_pairing()
     test_error_payload_shape()
-    with _captured_logs() as lines:
-        asyncio.run(test_safe_send_logs_unexpected(lines))
-    asyncio.run(test_start_game_mutex())
-    asyncio.run(test_message_intake())
-    asyncio.run(test_conn_limit())
-    asyncio.run(test_restart_requires_consensus())
+    test_safe_send_logs_unexpected()
+    test_start_game_mutex()
+    test_message_intake()
+    test_conn_limit()
+    test_restart_requires_consensus()
+    print("[10] Minor 收尾（稱謂／靜態檔／代打時機／傳輸／相依）")
+    test_player_label_modes()
+    test_single_player_wording()
+    test_takeover_timeout_calc()
+    test_takeover_note_timing()
+    test_static_dir_check()
+    test_missing_index_returns_404()
+    test_state_payload_omits_log()
+    test_dependency_pins()
     print("\n全部通過")
     return 0
 

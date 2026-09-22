@@ -1,8 +1,8 @@
 # /// script
 # requires-python = ">=3.12"
 # dependencies = [
-#   "fastapi",
-#   "uvicorn[standard]",
+#   "fastapi>=0.110,<1.0",
+#   "uvicorn[standard]>=0.29,<1.0",
 # ]
 # ///
 """多人連線對戰後端：為 1～4 位遠端玩家各開一個連接埠，共用同一牌局。
@@ -117,10 +117,10 @@ from mahjong import (
 )
 
 STATIC_DIR = Path(__file__).parent / "static"
+INDEX_HTML = STATIC_DIR / "index.html"
 
 DEFAULT_BASE_PORT = 8001
 SEAT_COUNT = 4
-_POLL_INTERVAL = 0.5          # 等待玩家回應時的輪詢間隔（秒）
 _TOKEN_BYTES = 24             # 席位 token 長度（secrets.token_urlsafe 的參數）
 
 logger = logging.getLogger("net_mahjong")
@@ -209,11 +209,15 @@ def seat_cookie_name(seat: int) -> str:
     return f"mj_seat{seat}_token"
 
 
-def state_to_json(state: GameState) -> dict:
+def state_to_json(state: GameState, include_log: bool = True) -> dict:
     """將 GameState dataclass 轉為可 JSON 序列化的 dict。
 
     Args:
-        state: 遊戲快照
+        state:       遊戲快照
+        include_log: 是否保留 ``log`` 欄位。連線模式的事件走 ``{"t": "log"}``
+                     依各連線游標推送，``state.log``（本輪緩衝）會與之重複，
+                     四家每一步各傳一份是白花的頻寬，因此清空。保留欄位本身
+                     （而非刪掉）以免動到前端預期的結構。
 
     Returns:
         可直接丟給 ``send_json`` 的 dict；``scores`` 中的 tuple 轉為 list。
@@ -221,6 +225,8 @@ def state_to_json(state: GameState) -> dict:
     d = dataclasses.asdict(state)
     if d.get("scores"):
         d["scores"] = [list(s) for s in d["scores"]]
+    if not include_log:
+        d["log"] = []
     return d
 
 
@@ -431,6 +437,8 @@ class Table:
         self._start_lock = asyncio.Lock()
         self._started_once = False
         # 對局進行中的重開提議：{同意的席位} 與提議時刻
+        # 連線狀態改變時喚醒等待中的 driver（取代固定輪詢）
+        self._wake = asyncio.Event()
         self._restart_votes: set[int] = set()
         self._restart_since: float = 0.0
         self._restart_opts: TableOptions | None = None
@@ -459,6 +467,11 @@ class Table:
             return False
         return secrets.compare_digest(token, expected)
 
+    @property
+    def seat_ports_json(self) -> dict[str, int]:
+        """席位 → 連接埠，key 轉為字串以便 JSON 序列化。"""
+        return {str(k): v for k, v in self.seat_ports.items()}
+
     def seat_full(self, seat: int) -> bool:
         """該席位的連線數是否已達上限。
 
@@ -486,8 +499,8 @@ class Table:
             "connected": self.connected_seats,
             "online": self._session.online_seats if self._session else self.connected_seats,
             "human_seats": self.seats,
-            "seat_ports": {str(k): v for k, v in self.seat_ports.items()},
-            "running": self._driver is not None and not self._driver.done(),
+            "seat_ports": self.seat_ports_json,
+            "running": self.game_running,
         }
 
     async def attach(self, conn: Connection) -> None:
@@ -501,10 +514,11 @@ class Table:
             "v": {
                 "seat": conn.seat,
                 "human_seats": self.seats,
-                "seat_ports": {str(k): v for k, v in self.seat_ports.items()},
+                "seat_ports": self.seat_ports_json,
                 "contest": self.contest,
             },
         })
+        self._wake.set()
         await self.broadcast_lobby()
         await self.sync(conn)
         if self.auto_start and not self._started_once and self._all_seats_connected():
@@ -519,6 +533,7 @@ class Table:
             self._offline_since[conn.seat] = asyncio.get_running_loop().time()
             if self._session is not None:
                 self._session.set_seat_online(conn.seat, False)
+        self._wake.set()
         await self.broadcast_lobby()
 
     def _all_seats_connected(self) -> bool:
@@ -560,12 +575,17 @@ class Table:
         await self._deliver(conn, payloads)
 
     def _render_for(self, conn: Connection) -> tuple[list[str], dict]:
-        """（需持有 _lock）產生單一連線的事件差集與盤面快照。"""
-        assert self._session is not None
+        """（需持有 _lock）產生單一連線的事件差集與盤面快照。
+
+        Raises:
+            RuntimeError: 尚未開局。
+        """
+        if self._session is None:
+            raise RuntimeError("牌局尚未開始，無法產生盤面")
         state = self._session.view(conn.seat)
         events = self._session.events(conn.cursor, conn.seat)
         conn.cursor = state.event_index
-        return events, state_to_json(state)
+        return events, state_to_json(state, include_log=False)
 
     async def _deliver(self, conn: Connection, payloads: tuple[list[str], dict]) -> None:
         """依序送出事件文字，最後送出盤面快照。"""
@@ -595,6 +615,31 @@ class Table:
     def game_running(self) -> bool:
         """是否有牌局正在進行。"""
         return self._driver is not None and not self._driver.done()
+
+    @property
+    def session(self) -> GameSession | None:
+        """目前的 :class:`~mahjong.GameSession`；尚未開局時為 None。"""
+        return self._session
+
+    @property
+    def restart_votes(self) -> list[int]:
+        """目前同意重開的席位（升冪）。"""
+        return sorted(self._restart_votes)
+
+    async def wait_game_over(self, timeout: float | None = None) -> None:
+        """等目前這局跑完（牌局結束或 driver 被取消）。
+
+        Args:
+            timeout: 最長等待秒數；None 為不限時
+
+        Raises:
+            asyncio.TimeoutError: 超過 timeout 仍未結束。
+        """
+        driver = self._driver
+        if driver is None:
+            return
+        with contextlib.suppress(asyncio.CancelledError):
+            await asyncio.wait_for(asyncio.shield(driver), timeout)
 
     async def request_restart(self, seat: int, opts: TableOptions) -> str | None:
         """處理某席位的 ``new_game``。
@@ -752,6 +797,10 @@ class Table:
     async def _await_response(self, seat: int) -> str:
         """等待指定席位回應；離線或逾時則改由 AI 代打。
 
+        以「算出下一個代打期限 + 連線狀態變更事件」驅動，而不是固定每 0.5 秒
+        醒來輪詢一次：玩家在線且未設發呆時限時根本沒有期限，就一直睡到他回應
+        或連線狀態改變（:meth:`attach`／:meth:`detach` 會設 :attr:`_wake`）。
+
         Args:
             seat: 待回應席位
 
@@ -763,18 +812,43 @@ class Table:
         self._pending = Pending(seat=seat, future=fut, since=loop.time())
         try:
             while not fut.done():
+                self._wake.clear()
+                waker = asyncio.ensure_future(self._wake.wait())
                 try:
-                    return await asyncio.wait_for(
-                        asyncio.shield(fut), _POLL_INTERVAL
+                    await asyncio.wait(
+                        {fut, waker},
+                        timeout=self._takeover_timeout(seat, loop.time()),
+                        return_when=asyncio.FIRST_COMPLETED,
                     )
-                except asyncio.TimeoutError:
-                    pass
+                finally:
+                    waker.cancel()
+                if fut.done():
+                    break
                 reason = self._takeover_reason(seat, loop.time())
-                if reason is not None and not fut.done():
+                if reason is not None:
                     await self._takeover(fut, seat, reason)
             return fut.result()
         finally:
             self._pending = None
+
+    def _takeover_timeout(self, seat: int, now: float) -> float | None:
+        """距離下一個可能的代打時機還有幾秒；沒有任何期限時回傳 None。
+
+        回傳 None 表示「在玩家回應或連線狀態改變之前都不必醒來」。
+
+        Args:
+            seat: 待回應席位
+            now:  目前時刻（``loop.time()``）
+        """
+        deadlines: list[float] = []
+        offline_at = self._offline_since.get(seat)
+        if offline_at is not None and not self._conns[seat]:
+            deadlines.append(offline_at + self.disconnect_grace - now)
+        if self.afk_seconds > 0 and self._pending is not None:
+            deadlines.append(self._pending.since + self.afk_seconds - now)
+        if not deadlines:
+            return None
+        return max(0.0, min(deadlines))
 
     def _takeover_reason(self, seat: int, now: float) -> str | None:
         """判斷是否該讓 AI 代打，回傳原因字串；不需代打時回傳 None。"""
@@ -788,16 +862,22 @@ class Table:
         return None
 
     async def _takeover(self, fut: asyncio.Future, seat: int, reason: str) -> None:
-        """以既有 AI 演算法代替該席位做出決定。"""
-        assert self._session is not None
+        """以既有 AI 演算法代替該席位做出決定。
+
+        算 AI 手要進 ``to_thread``，這期間玩家仍可能送出回應（:meth:`submit_discard`
+        不持鎖）。因此「本手改由 AI 代打」這則事件要等到真的把 AI 的決定寫進
+        future 之後才寫——否則玩家自己打的牌，事件流卻說是 AI 代打的。
+        """
+        if self._session is None:
+            raise RuntimeError("牌局尚未開始，無法代打")
         async with self._lock:
             if fut.done():
                 return
             resp = await asyncio.to_thread(self._session.ai_suggestion)
-            label = self._session.seat_wind(seat)
-            self._session.note(f"{label} {reason}，本手改由 AI 代打")
-        if not fut.done():
+            if fut.done():
+                return                  # 玩家在算 AI 手的空檔回應了，讓他的優先
             fut.set_result(resp)
+            self._session.note(f"{self._session.seat_wind(seat)} {reason}，本手改由 AI 代打")
 
     def _claim_turn(self, seat: int) -> tuple[Pending | None, str | None]:
         """確認現在確實輪到這一席，回傳 (Pending, 錯誤訊息)。"""
@@ -830,9 +910,8 @@ class Table:
             成功時回傳 None，否則回傳給該玩家的錯誤訊息。
         """
         pending, err = self._claim_turn(seat)
-        if err is not None:
-            return err
-        assert pending is not None and self._session is not None
+        if pending is None or self._session is None:
+            return err or "牌局尚未開始"
 
         if self._session.current_phase != "human_discard":
             return "目前不是出牌階段"
@@ -861,9 +940,8 @@ class Table:
             成功時回傳 None，否則回傳給該玩家的錯誤訊息。
         """
         pending, err = self._claim_turn(seat)
-        if err is not None:
-            return err
-        assert pending is not None and self._session is not None
+        if pending is None or self._session is None:
+            return err or "牌局尚未開始"
 
         if self._session.current_phase != "prompt":
             return "目前沒有待回應的提示"
@@ -918,6 +996,20 @@ def origin_allowed(origin: str | None, host_header: str | None) -> bool:
     return parsed.netloc == host_header
 
 
+def check_static_dir() -> None:
+    """啟動前確認前端資源齊全，缺檔就直接失敗而不是等玩家連上才報錯。
+
+    Raises:
+        SystemExit: ``static/`` 目錄或必要檔案不存在。
+    """
+    if not STATIC_DIR.is_dir():
+        raise SystemExit(f"找不到前端目錄：{STATIC_DIR}")
+    missing = [n for n in ("index.html", "app.js", "style.css")
+               if not (STATIC_DIR / n).is_file()]
+    if missing:
+        raise SystemExit(f"前端資源缺少：{'、'.join(missing)}（位於 {STATIC_DIR}）")
+
+
 def create_seat_app(table: Table, seat: int) -> FastAPI:
     """建立綁定於單一席位的 FastAPI app。
 
@@ -952,7 +1044,17 @@ def create_seat_app(table: Table, seat: int) -> FastAPI:
                                f"請使用伺服器啟動時印出的網址（含 ?t=...）。",
                 },
             )
-        resp = FileResponse(STATIC_DIR / "index.html")
+        if not INDEX_HTML.is_file():
+            # FileResponse 在檔案不存在時會在回應階段拋 RuntimeError（500）；
+            # 缺的是靜態資源，語意上是 404，而且訊息要說得出少了什麼。
+            logger.error("找不到前端主頁：%s", INDEX_HTML)
+            return JSONResponse(
+                status_code=404,
+                content={"error": "static_missing",
+                         "message": f"找不到前端主頁 {INDEX_HTML.name}，"
+                                    f"請確認 static/ 目錄完整"},
+            )
+        resp = FileResponse(INDEX_HTML)
         resp.set_cookie(
             cookie_name, token or "",
             httponly=True,        # JavaScript 讀不到，降低 XSS 竊取風險
@@ -972,7 +1074,7 @@ def create_seat_app(table: Table, seat: int) -> FastAPI:
         return JSONResponse({
             "seat": seat,
             "human_seats": table.seats,
-            "seat_ports": {str(k): v for k, v in table.seat_ports.items()},
+            "seat_ports": table.seat_ports_json,
             "contest": table.contest,
         })
 
@@ -1040,7 +1142,8 @@ def create_seat_app(table: Table, seat: int) -> FastAPI:
                     if opts_err is not None:
                         await ws.send_json(err_payload(ERR_BAD_PARAM, opts_err))
                         continue
-                    assert opts is not None
+                    if opts is None:       # 型別收斂，正常流程不會走到
+                        continue
                     pending_msg = await table.request_restart(seat, opts)
                     if pending_msg:
                         await ws.send_json(err_payload(
@@ -1089,7 +1192,16 @@ class _SharedSignalServer(uvicorn.Server):
 
     多個 Server 共用同一個事件迴圈時，各自 ``loop.add_signal_handler`` 會互相
     覆寫，導致 Ctrl-C 只關掉其中一個連接埠。
+
+    Warning:
+        這是覆寫 uvicorn 的**內部 API**：``install_signal_handlers()``（< 0.29）
+        與 ``capture_signals()``（>= 0.29）。uvicorn 再改一次介面，這裡就會
+        無聲失效（Ctrl-C 只關掉一個埠、其餘變殭屍），所以 :func:`serve_all`
+        啟動時會確認至少有一個掛得上去，掛不上就出聲警告。
     """
+
+    #: 這個版本的 uvicorn 實際採用的停用方式（供 serve_all 檢查）
+    _SIGNAL_HOOKS = ("install_signal_handlers", "capture_signals")
 
     def install_signal_handlers(self) -> None:   # uvicorn < 0.29
         """不安裝訊號處理（由外層統一處理）。"""
@@ -1109,6 +1221,14 @@ async def serve_all(table: Table, host: str, seat_ports: dict[int, int]) -> None
         host:       監聽位址
         seat_ports: 席位 → 連接埠
     """
+    if not any(hasattr(uvicorn.Server, name)
+               for name in _SharedSignalServer._SIGNAL_HOOKS):
+        logger.warning(
+            "uvicorn %s 已不再提供 %s，訊號處理可能無法統一控管——"
+            "Ctrl-C 也許只會關掉其中一個連接埠",
+            getattr(uvicorn, "__version__", "?"),
+            "／".join(_SharedSignalServer._SIGNAL_HOOKS),
+        )
     servers = [
         _SharedSignalServer(
             uvicorn.Config(
@@ -1229,6 +1349,7 @@ def main(argv: list[str] | None = None) -> int:
     """命令列進入點。"""
     args = build_parser().parse_args(argv)
     seats, seat_ports = resolve_seats_ports(args)
+    check_static_dir()
 
     logging.basicConfig(
         level=getattr(logging, args.log_level.upper()),

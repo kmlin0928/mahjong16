@@ -1,8 +1,8 @@
 # /// script
 # requires-python = ">=3.12"
 # dependencies = [
-#   "fastapi",
-#   "uvicorn[standard]",
+#   "fastapi>=0.110,<1.0",
+#   "uvicorn[standard]>=0.29,<1.0",
 # ]
 # ///
 """FastAPI 網頁後端，搭配 GameSession 提供麻將競賽模式的 REST API 與 WebSocket 串流。"""
@@ -16,7 +16,7 @@ from fastapi import FastAPI, HTTPException, WebSocket, WebSocketDisconnect
 from fastapi.responses import FileResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
 
-from mahjong import GameSession, GameState, HUMAN_PLAYER
+from mahjong import GameSession, GameState
 
 STATIC_DIR = Path(__file__).parent / "static"
 

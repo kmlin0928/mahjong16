@@ -5,6 +5,7 @@
 # ]
 # ///
 from __future__ import annotations
+from collections.abc import Iterable
 from enum import IntEnum
 # mahjong.py — 16 張麻將模擬器（Python 重構版）
 # 原始實作：mahjong.go（Go 語言）
@@ -37,7 +38,10 @@ DRAGON_KINDS = DRAGON_COUNT                                 # 3
 HONOR_KINDS = WIND_KINDS + DRAGON_KINDS                     # 7（字牌合計）
 
 # 玩家模式
-HUMAN_PLAYER: int = 0        # 人類玩家席位（0–3），其餘為 AI
+HUMAN_PLAYER: int = 0        # 預設人類玩家席位（0–3），其餘為 AI
+#   單機／單人網頁模式沿用此常數；多人連線模式改由
+#   GameSession(human_seats=...) 指定一至四個真人席位，未被指定
+#   （或中途離線）的席位一律交給既有 AI 演算法接手。
 
 # AI 行為開關
 AI_AUTO_KONG: bool = False   # 明槓：預設不自動槓，改為 True 可啟用
@@ -1742,7 +1746,8 @@ class GameState:
     """可 JSON 序列化的遊戲快照，供網頁前端渲染使用。
 
     Attributes:
-        phase:       "human_discard" | "prompt" | "game_over"
+        phase:       "human_discard" | "prompt" | "waiting" | "game_over"
+                     （"waiting" 僅出現在多人連線模式：輪到別家決策，本家旁觀）
         your_hand:   你的手牌牌名列表（已排序）
         hand_counts: 四家手牌張數（競賽模式 AI 不顯示牌名）
         melds:       四家面牌組，melds[i] 為第 i 家的副露列表，每副露為牌名列表
@@ -1771,15 +1776,36 @@ class GameState:
     drawn_tile_idx: int | None = None  # 排序後新摸牌的索引（human_discard 時有效）
     all_hands: list[list[str]] | None = None  # game_over 時填入四家完整手牌（已排序）
     game_round_wind: str = ""  # 圈風（東/南/西/北），獨立於局風 game_wind
+    # ── 多人連線模式欄位（單人模式維持預設值，前端可忽略） ──────────
+    your_seat: int = HUMAN_PLAYER            # 本快照的視角席位（0–3）
+    current_seat: int = -1                   # 目前等待回應的席位；-1 表示不等待
+    human_seats: list[int] = field(default_factory=list)   # 由真人操作的席位
+    online_seats: list[int] = field(default_factory=list)  # 目前仍在線的真人席位
+    event_index: int = 0                     # 事件流游標（累積事件總數）
 
 
-def player_label(player: int, seat_winds: list[str] | None = None) -> str:
-    """回傳玩家稱謂：若提供 seat_winds 則顯示門風（東／南／西／北），否則顯示相對位置（你／下家／對家／上家）。"""
+def player_label(
+    player: int,
+    seat_winds: list[str] | None = None,
+    viewer: int | None = None,
+) -> str:
+    """回傳玩家稱謂。
+
+    Args:
+        player:     欲稱呼的席位（0–3）
+        seat_winds: 四家門風；有值時直接回傳門風名稱（絕對稱謂，多人連線適用）
+        viewer:     視角席位；None 時沿用模組常數 HUMAN_PLAYER
+
+    Returns:
+        seat_winds 有值 → 門風名稱；否則為相對 viewer 的稱謂
+        （你／下家／對家／上家）。
+    """
     if seat_winds is not None:
         return seat_winds[player]
-    if player == HUMAN_PLAYER:
+    v = HUMAN_PLAYER if viewer is None else viewer
+    if player == v:
         return "你"
-    return {1: "下家", 2: "對家", 3: "上家"}[(player - HUMAN_PLAYER) % 4]
+    return {1: "下家", 2: "對家", 3: "上家"}[(player - v) % 4]
 
 
 # ---------------------------------------------------------------------------
@@ -1800,6 +1826,14 @@ class GameSession:
         state = session.respond("y")     # 人類宣胡 / 確認碰槓
         state = session.respond("n")     # 跳過提示
         state = session.respond("chi:1") # 人類選擇第 2 種吃法
+
+    多人連線模式（``net_mahjong.py``）::
+
+        session = GameSession(human_seats=[0, 2])   # 0、2 為真人，1、3 為 AI
+        state = session.start()                     # 推進至首個真人決策點
+        state.current_seat                          # 該由哪一席回應
+        other = session.view(2)                     # 以 2 號席位視角重繪同一盤面
+        session.set_seat_online(2, False)           # 2 號離線 → 之後由 AI 代打
     """
 
     def __init__(
@@ -1809,6 +1843,7 @@ class GameSession:
         consecutive: int = 0,
         seat_winds: list[str] | None = None,
         game_round_wind: str | None = None,
+        human_seats: Iterable[int] | None = None,
     ) -> None:
         """初始化 GameSession。
 
@@ -1818,24 +1853,202 @@ class GameSession:
             consecutive:         連莊次數
             seat_winds:          指定座次門風列表；None 時隨機順時針抽定
             game_round_wind:     圈風（東/南/西/北）；None 時等於莊家門風
+            human_seats:         由真人操作的席位（1–4 個，0–3）；
+                                 None 時退回單人模式 {HUMAN_PLAYER}。
+                                 未列入者一律由既有 AI 演算法操作。
+
+        Raises:
+            ValueError: human_seats 為空集合，或含 0–3 以外的席位。
         """
         self.contest = contest
         self.dealer_idx_override = dealer_idx_override
         self.consecutive = consecutive
         self.seat_winds_override = seat_winds
         self.game_round_wind_override = game_round_wind
+        if human_seats is None:
+            seats = {HUMAN_PLAYER}
+        else:
+            seats = {int(s) for s in human_seats}
+            if not seats:
+                raise ValueError("human_seats 至少需指定一個席位")
+            if any(s < 0 or s > 3 for s in seats):
+                raise ValueError(f"human_seats 僅接受 0–3，收到 {sorted(seats)}")
+        self._human_seats: set[int] = seats
+        self._absent_seats: set[int] = set()   # 暫時離線 → 由 AI 代打
+        self._default_viewer: int = min(seats)
         self._gen: object = None
-        self._log: list[str] = []
+        # 事件以 (訊息, 私訊對象席位) 儲存；私訊對象為 None 代表公開事件
+        self._log: list[tuple[str, int | None]] = []        # 本輪（上次回應後）
+        self._event_log: list[tuple[str, int | None]] = []  # 開局以來（只增不減）
         self._game_wind: str = ""
         self._game_round_wind: str = ""
         self._seat_winds: list[str] = []
         self._dealer_idx: int = -1
-        self._drawn_tile: int | None = None  # 本輪人類玩家剛摸到的牌號
+        self._drawn_tiles: list[int | None] = [None] * 4  # 各席剛摸到的牌號
+        self._m: Mahjong | None = None         # 目前牌局物件（供 view/AI 代打用）
+        self._pending: dict | None = None      # 目前待回應的決策點快照參數
 
     def start(self) -> GameState:
-        """初始化牌局，推進至首個人類決策點，回傳 GameState。"""
+        """初始化牌局，推進至首個真人決策點。
+
+        Returns:
+            以「待回應席位」為視角的 GameState；多人模式可再用
+            :meth:`view` 取得其他席位的視角。
+        """
         self._gen = self._game_loop()
         return next(self._gen)  # type: ignore[arg-type]
+
+    # ------------------------------------------------------------------
+    # 多人連線模式 API
+    # ------------------------------------------------------------------
+
+    @property
+    def human_seats(self) -> list[int]:
+        """由真人操作的席位（升冪）。"""
+        return sorted(self._human_seats)
+
+    @property
+    def online_seats(self) -> list[int]:
+        """目前仍在線、實際由真人操作的席位（升冪）。"""
+        return sorted(self._human_seats - self._absent_seats)
+
+    @property
+    def current_seat(self) -> int:
+        """目前等待回應的席位；無待回應（未開局或已結束）時回傳 -1。"""
+        if self._pending is None:
+            return -1
+        actor = self._pending.get("actor")
+        return -1 if actor is None else int(actor)
+
+    def _is_human(self, seat: int) -> bool:
+        """該席位此刻是否由真人操作（離線者視同 AI）。"""
+        return seat in self._human_seats and seat not in self._absent_seats
+
+    def set_seat_online(self, seat: int, online: bool) -> None:
+        """標記席位在線狀態。
+
+        離線的真人席位在下一個決策點會自動由 AI 接手（決策點當下才判定，
+        因此不影響已經 yield 出去、正在等待回應的那一步）。
+
+        Args:
+            seat:   席位（0–3）
+            online: True 恢復真人操作，False 交給 AI 代打
+        """
+        if seat not in self._human_seats:
+            return
+        if online:
+            self._absent_seats.discard(seat)
+        else:
+            self._absent_seats.add(seat)
+
+    def seat_wind(self, seat: int) -> str:
+        """回傳席位的門風名稱；尚未開局時回傳 ``"座位 N"``。
+
+        Args:
+            seat: 席位（0–3）
+        """
+        if self._seat_winds:
+            return self._seat_winds[seat]
+        return f"座位 {seat}"
+
+    def note(self, msg: str, seat: int | None = None) -> None:
+        """由外部（連線層）寫入一則事件，讓它進入重播與各家事件流。
+
+        Args:
+            msg:  事件文字（例：「東 離線，改由 AI 代打」）
+            seat: 僅該席位可見；None 為公開事件
+        """
+        self._L(msg, private_to=seat)
+
+    def events(self, since: int = 0, seat: int | None = None) -> list[str]:
+        """回傳開局以來第 ``since`` 筆之後、該席位可見的事件文字。
+
+        Args:
+            since: 游標（前次取得的 ``GameState.event_index``）
+            seat:  觀看席位；None 時僅回傳公開事件
+
+        Returns:
+            新增且可見的事件文字列表；``since`` 超出範圍時回傳空列表。
+            注意游標計的是「事件總數」（含他家私訊事件），所以回傳長度
+            不一定等於 ``event_index`` 的差值。
+        """
+        if since < 0:
+            since = 0
+        return [
+            msg for msg, private_to in self._event_log[since:]
+            if private_to is None or private_to == seat
+        ]
+
+    def view(self, seat: int) -> GameState:
+        """以指定席位的視角重繪目前盤面（不推進遊戲）。
+
+        Args:
+            seat: 視角席位（0–3）
+
+        Returns:
+            該席位視角的 GameState；輪到別家時 phase 為 ``"waiting"``。
+
+        Raises:
+            RuntimeError: 尚未呼叫 start()。
+        """
+        if self._pending is None or self._m is None:
+            raise RuntimeError("GameSession 尚未啟動，請先呼叫 start()")
+        pd = self._pending
+        phase = pd["phase"]
+        actor = pd["actor"]
+        if phase != "game_over" and actor is not None and seat != actor:
+            phase = "waiting"
+        return self._snapshot(
+            self._m,
+            phase,
+            prompt=pd["prompt"] if seat == actor else None,
+            winner=pd["winner"],
+            scores=pd["scores"],
+            actor=actor,
+            viewer=seat,
+            record=False,
+        )
+
+    def ai_suggestion(self) -> str:
+        """回傳 AI 在目前待回應決策點會採取的動作（供離線代打使用）。
+
+        沿用既有 AI 演算法：出牌走 ``calculate_gates`` + ``decide_play``，
+        胡牌一律接受，碰／吃一律接受，槓依 ``AI_AUTO_KONG`` 決定。
+
+        Returns:
+            可直接餵給 :meth:`respond` 的回應字串。
+
+        Raises:
+            RuntimeError: 尚未啟動，或目前無待回應的決策點。
+        """
+        if self._pending is None or self._m is None:
+            raise RuntimeError("GameSession 尚未啟動，請先呼叫 start()")
+        pd = self._pending
+        actor = pd["actor"]
+        if actor is None:
+            raise RuntimeError("目前沒有待回應的決策點")
+        m = self._m
+        if pd["phase"] == "human_discard":
+            p = m.players[actor]
+            ai = m.ai[actor]
+            calculate_gates(m, p, ai)
+            result = decide_play(p, ai, m.players)
+            idx = result[0] if isinstance(result, tuple) else result
+            return str(idx)
+        prompt: PromptInfo | None = pd["prompt"]
+        if prompt is None:
+            return "n"
+        if prompt.type in ("win_tsumo", "win_ron", "rob_kong"):
+            return "y"          # AI 見胡必胡
+        if prompt.type in ("kong", "add_kong"):
+            return "y" if AI_AUTO_KONG else "n"
+        if prompt.type == "pon":
+            return "y"          # AI 見碰必碰
+        if prompt.type == "chi":
+            # chi_options 的排序與 can_chi 的嘗試順序一致（後吃→夾吃→前吃），
+            # AI 取 can_chi 的第一組，即索引 0。
+            return "chi:0" if prompt.chi_options else "n"
+        return "n"
 
     def respond(self, response: str) -> GameState:
         """傳入人類回應，繼續推進遊戲，回傳下一個 GameState。
@@ -1863,17 +2076,39 @@ class GameSession:
         prompt: PromptInfo | None = None,
         winner: str | None = None,
         scores: list[tuple[str, int]] | None = None,
+        actor: int | None = None,
+        viewer: int | None = None,
+        record: bool = True,
     ) -> GameState:
-        """根據目前遊戲狀態產生 GameState 快照。
+        """根據目前遊戲狀態產生指定視角的 GameState 快照。
 
         Args:
             m:      遊戲物件
-            phase:  "human_discard" | "prompt" | "game_over"
+            phase:  "human_discard" | "prompt" | "waiting" | "game_over"
             prompt: 提示（phase=="prompt" 時）
             winner: 勝者稱謂（game_over 時）
             scores: 台數明細（game_over 時）
+            actor:  待回應的席位；game_over 時為 None
+            viewer: 視角席位；None 時取 actor，actor 亦為 None 時取
+                    最小的真人席位（單人模式即 HUMAN_PLAYER）
+            record: 是否記錄為「目前待回應決策點」，供 view()／ai_suggestion()
+                    重建其他視角；view() 自身重繪時傳 False 以免覆寫
+
+        Returns:
+            以 viewer 為視角的 GameState。
         """
-        your_hand = [n_to_chinese(t) for t in sorted(m.players[HUMAN_PLAYER].hand)]
+        if viewer is None:
+            viewer = actor if actor is not None else self._default_viewer
+        if record:
+            self._m = m
+            self._pending = {
+                "phase": phase,
+                "prompt": prompt,
+                "winner": winner,
+                "scores": scores,
+                "actor": actor,
+            }
+        your_hand = [n_to_chinese(t) for t in sorted(m.players[viewer].hand)]
         hand_counts = [len(m.players[i].hand) for i in range(4)]
         melds_out: list[list[list[str]]] = []
         discards_out: list[list[str]] = []
@@ -1892,9 +2127,10 @@ class GameSession:
             discards_out.append([n_to_chinese(t) for t in p.discards])
             bonus_out.append([n_to_chinese(t) for t in p.bonus])
         drawn_tile_idx: int | None = None
-        if phase == "human_discard" and self._drawn_tile is not None:
+        _drawn = self._drawn_tiles[viewer]
+        if phase == "human_discard" and _drawn is not None:
             try:
-                drawn_tile_idx = sorted(m.players[HUMAN_PLAYER].hand).index(self._drawn_tile)
+                drawn_tile_idx = sorted(m.players[viewer].hand).index(_drawn)
             except ValueError:
                 pass
         all_hands: list[list[str]] | None = None
@@ -1910,7 +2146,10 @@ class GameSession:
             melds=melds_out,
             discards=discards_out,
             bonus=bonus_out,
-            log=list(self._log),
+            log=[
+                msg for msg, private_to in self._log
+                if private_to is None or private_to == viewer
+            ],
             game_wind=self._game_wind,
             seat_winds=self._seat_winds,
             dealer_idx=self._dealer_idx,
@@ -1922,15 +2161,30 @@ class GameSession:
             drawn_tile_idx=drawn_tile_idx,
             all_hands=all_hands,
             game_round_wind=self._game_round_wind,
+            your_seat=viewer,
+            current_seat=-1 if actor is None else actor,
+            human_seats=self.human_seats,
+            online_seats=self.online_seats,
+            event_index=len(self._event_log),
         )
 
     def _log_clear(self) -> None:
-        """清空 log 緩衝。"""
+        """清空本輪 log 緩衝（不影響 _event_log 的完整事件流）。"""
         self._log.clear()
 
-    def _L(self, msg: str) -> None:
-        """附加一行事件文字至 log。"""
-        self._log.append(msg)
+    def _L(self, msg: str, private_to: int | None = None) -> None:
+        """附加一行事件文字：同時寫入本輪緩衝與完整事件流。
+
+        單人模式沿用 ``GameState.log``（本輪緩衝）即可；多人模式改用
+        :meth:`events` 依各連線的游標取差集，避免任何一家漏接事件。
+
+        Args:
+            msg:        事件文字
+            private_to: 僅該席位可見（競賽模式下的暗牌資訊，如槓後補摸）；
+                        None 代表公開事件，四家皆可見
+        """
+        self._log.append((msg, private_to))
+        self._event_log.append((msg, private_to))
 
     # ------------------------------------------------------------------
     # 遊戲主迴圈（generator）
@@ -1953,7 +2207,10 @@ class GameSession:
 
         m = Mahjong(n_hand=16)
         m.init_deal()
+        self._m = m
         self._log.clear()
+        self._event_log.clear()
+        self._drawn_tiles = [None] * 4
 
         # 分配門風：連莊沿用上局座次，新局隨機順時針抽定
         if self.seat_winds_override is not None:
@@ -1962,7 +2219,6 @@ class GameSession:
             _offset = _rnd.randrange(4)
             seat_winds = [_SEAT_WIND_NAMES[(_offset + i) % 4] for i in range(4)]
         plabel = lambda p: player_label(p, seat_winds)  # noqa: E731
-        human_wind = seat_winds[HUMAN_PLAYER]
         if self.dealer_idx_override is not None:
             dealer_idx = self.dealer_idx_override
         elif self.consecutive > 0:
@@ -1982,7 +2238,13 @@ class GameSession:
         self._seat_winds = seat_winds
         self._dealer_idx = dealer_idx
 
-        self._L(f"【你是 {human_wind}｜{game_round_wind}風{game_wind}局】莊家：{plabel(dealer_idx)}")
+        _seat_roles = "、".join(
+            f"{seat_winds[s]}{'（玩家）' if s in self._human_seats else '（AI）'}"
+            for s in range(4)
+        )
+        self._L(
+            f"【{game_round_wind}風{game_wind}局】莊家：{plabel(dealer_idx)}｜{_seat_roles}"
+        )
 
         # 莊家多摸一張
         dealer_p = m.players[dealer_idx]
@@ -2042,16 +2304,15 @@ class GameSession:
                     break
                 after_supplement = (_orig_drawn >= BONUS_START)
                 p.add_seen(drawn)
-                if player == HUMAN_PLAYER:
-                    self._drawn_tile = drawn
+                self._drawn_tiles[player] = drawn
 
                 # 自摸判胡
                 if drawn < BONUS_START and is_win_ext(
                     p.hand[:-1], drawn, p.chi_count + p.pon_count + p.kong_count
                 ):
-                    if player == HUMAN_PLAYER:
+                    if self._is_human(player):
                         pr = PromptInfo(type="win_tsumo", tile=n_to_chinese(drawn), tile_id=drawn)
-                        resp: str = yield self._snapshot(m, "prompt", prompt=pr)
+                        resp: str = yield self._snapshot(m, "prompt", prompt=pr, actor=player)
                         self._log_clear()
                         if resp == "y":
                             _sc = score_hand(
@@ -2060,7 +2321,7 @@ class GameSession:
                                 is_last_tile=last_tile_drawn, is_first_round=first_round,
                                 tenhou_label=tenhou_flags.get(player, ""),
                             )
-                            self._L(f"你自摸胡 {n_to_chinese(drawn)}！")
+                            self._L(f"{plabel(player)}自摸胡 {n_to_chinese(drawn)}！")
                             return self._snapshot(m, "game_over", winner=plabel(player), scores=_sc)
                         # 否則繼續出牌
                     else:
@@ -2080,9 +2341,9 @@ class GameSession:
                 add_meld_idx = can_add_to_pon(drawn, p.melds)
                 if add_meld_idx is not None:
                     do_add = False
-                    if player == HUMAN_PLAYER:
+                    if self._is_human(player):
                         pr = PromptInfo(type="add_kong", tile=n_to_chinese(drawn), tile_id=drawn)
-                        resp = yield self._snapshot(m, "prompt", prompt=pr)
+                        resp = yield self._snapshot(m, "prompt", prompt=pr, actor=player)
                         self._log_clear()
                         do_add = (resp == "y")
                     elif AI_AUTO_KONG:
@@ -2102,9 +2363,9 @@ class GameSession:
                                 rob_p.chi_count + rob_p.pon_count + rob_p.kong_count,
                             ):
                                 do_rob = True
-                                if rob_idx == HUMAN_PLAYER:
+                                if self._is_human(rob_idx):
                                     pr2 = PromptInfo(type="rob_kong", tile=n_to_chinese(drawn), tile_id=drawn)
-                                    resp2: str = yield self._snapshot(m, "prompt", prompt=pr2)
+                                    resp2: str = yield self._snapshot(m, "prompt", prompt=pr2, actor=rob_idx)
                                     self._log_clear()
                                     do_rob = (resp2 == "y")
                                 if do_rob:
@@ -2126,14 +2387,16 @@ class GameSession:
                             if _kong_bonus:
                                 _tiles_str = " ".join(n_to_chinese(t) for t in _kong_bonus)
                                 self._L(f"{plabel(player)}補花 {_tiles_str}")
-                            if not self.contest or player == HUMAN_PLAYER:
-                                self._L(f"補摸 {n_to_chinese(p.hand[-1])}")
+                            # 競賽模式下補摸牌面僅該家可見，其餘三家看不到
+                            self._L(
+                                f"{plabel(player)}補摸 {n_to_chinese(p.hand[-1])}",
+                                private_to=player if self.contest else None,
+                            )
                         after_supplement = True
                         skip_draw = True
                         continue
             else:
-                if player == HUMAN_PLAYER:
-                    self._drawn_tile = None  # 吃/碰/槓後無新摸牌，不高亮
+                self._drawn_tiles[player] = None  # 吃/碰/槓後無新摸牌，不高亮
                 # 天胡（若手牌含花牌則跳過：牌堆耗盡邊界情況）
                 if (
                     first_round and player == dealer_idx
@@ -2156,14 +2419,14 @@ class GameSession:
             if any(t >= BONUS_START for t in p.hand):
                 break
             p.hand.sort()
-            if player == HUMAN_PLAYER:
-                resp = yield self._snapshot(m, "human_discard")
+            if self._is_human(player):
+                resp = yield self._snapshot(m, "human_discard", actor=player)
                 self._log_clear()
                 discard_idx = int(resp)
                 discard_tile = p.hand[discard_idx]
                 p.hand[discard_idx] = p.hand[-1]
                 p.hand.pop()
-                self._L(f"你打 {n_to_chinese(discard_tile)}")
+                self._L(f"{plabel(player)}打 {n_to_chinese(discard_tile)}")
             else:
                 calculate_gates(m, p, ai)
                 discard_idx, discard_level = decide_play(p, ai, m.players)  # type: ignore[misc]
@@ -2200,9 +2463,9 @@ class GameSession:
                     cand_p.hand, discard_tile,
                     cand_p.chi_count + cand_p.pon_count + cand_p.kong_count,
                 ):
-                    if cand_idx == HUMAN_PLAYER:
+                    if self._is_human(cand_idx):
                         pr = PromptInfo(type="win_ron", tile=n_to_chinese(discard_tile), tile_id=discard_tile)
-                        resp = yield self._snapshot(m, "prompt", prompt=pr)
+                        resp = yield self._snapshot(m, "prompt", prompt=pr, actor=cand_idx)
                         self._log_clear()
                         if resp != "y":
                             continue
@@ -2224,9 +2487,9 @@ class GameSession:
                 cand_p = m.players[cand_idx]
                 kong_triple = can_kong(cand_p.hand, discard_tile)
                 if kong_triple is not None:
-                    if cand_idx == HUMAN_PLAYER:
+                    if self._is_human(cand_idx):
                         pr = PromptInfo(type="kong", tile=n_to_chinese(discard_tile), tile_id=discard_tile)
-                        resp = yield self._snapshot(m, "prompt", prompt=pr)
+                        resp = yield self._snapshot(m, "prompt", prompt=pr, actor=cand_idx)
                         self._log_clear()
                         if resp != "y":
                             continue
@@ -2250,9 +2513,9 @@ class GameSession:
                     cand_p = m.players[cand_idx]
                     pon_pair = can_pon(cand_p.hand, discard_tile)
                     if pon_pair is not None:
-                        if cand_idx == HUMAN_PLAYER:
+                        if self._is_human(cand_idx):
                             pr = PromptInfo(type="pon", tile=n_to_chinese(discard_tile), tile_id=discard_tile)
-                            resp = yield self._snapshot(m, "prompt", prompt=pr)
+                            resp = yield self._snapshot(m, "prompt", prompt=pr, actor=cand_idx)
                             self._log_clear()
                             if resp != "y":
                                 continue
@@ -2275,7 +2538,7 @@ class GameSession:
                 if chi_pair is not None:
                     do_chi = True
                     chosen_ta, chosen_tb = chi_pair
-                    if next_idx == HUMAN_PLAYER:
+                    if self._is_human(next_idx):
                         # 枚舉所有吃法
                         kind_d = discard_tile // COPIES
                         rank_d = kind_d % TILES_PER_SUIT
@@ -2309,7 +2572,7 @@ class GameSession:
                             type="chi", tile=n_to_chinese(discard_tile),
                             tile_id=discard_tile, chi_options=chi_opts,
                         )
-                        resp = yield self._snapshot(m, "prompt", prompt=pr)
+                        resp = yield self._snapshot(m, "prompt", prompt=pr, actor=next_idx)
                         self._log_clear()
                         if resp in ("n", "pass"):
                             do_chi = False

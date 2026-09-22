@@ -690,3 +690,83 @@ body {
   #prompt-title { font-size: 0.8rem; }
   #prompt-buttons button { padding: 4px 8px; font-size: 0.75rem; }
 }
+
+/* ===========================================================
+   多人連線模式（net_mahjong.py）專用樣式
+   單人模式不會出現這些元素，故一律預設 hidden 由 JS 控制顯示
+   =========================================================== */
+
+/* 本家席位徽章（右上角） */
+#seat-badge {
+  position: fixed;
+  top: 10px;
+  right: 12px;
+  z-index: 150;
+  font-size: 0.75rem;
+  font-weight: 700;
+  letter-spacing: 0.05em;
+  color: #f5d060;
+  background: rgba(0, 0, 0, 0.55);
+  border: 1px solid rgba(200, 150, 10, 0.45);
+  border-radius: 6px;
+  padding: 4px 10px;
+}
+#seat-badge.hidden { display: none; }
+
+/* 輪到誰的提示（中央牌堆計數下方） */
+#turn-hint {
+  font-size: 0.72rem;
+  font-weight: 700;
+  letter-spacing: 0.05em;
+  text-align: center;
+  color: #c8c8c8;
+  background: rgba(0, 0, 0, 0.35);
+  border: 1px solid rgba(255, 255, 255, 0.12);
+  border-radius: 5px;
+  padding: 3px 8px;
+  margin-top: 4px;
+}
+#turn-hint.my-turn {
+  color: #f5d060;
+  border-color: rgba(200, 150, 10, 0.6);
+  animation: pulse-turn 1.4s ease-in-out infinite;
+}
+#turn-hint.hidden { display: none; }
+
+@keyframes pulse-turn {
+  0%, 100% { box-shadow: 0 0 0 rgba(200, 150, 10, 0); }
+  50%      { box-shadow: 0 0 14px rgba(200, 150, 10, 0.55); }
+}
+
+/* 開始覆蓋層：大廳 + 開始按鈕 */
+#start-panel {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 18px;
+}
+#lobby-panel {
+  min-width: 240px;
+  color: #e0e0e0;
+  background: rgba(0, 0, 0, 0.55);
+  border: 1px solid rgba(200, 150, 10, 0.35);
+  border-radius: 8px;
+  padding: 12px 16px;
+  font-size: 0.82rem;
+  letter-spacing: 0.04em;
+}
+#lobby-panel.hidden { display: none; }
+.lobby-title {
+  font-weight: 900;
+  color: #f5d060;
+  text-align: center;
+  margin-bottom: 8px;
+  letter-spacing: 0.15em;
+}
+.lobby-row {
+  padding: 3px 0;
+  border-top: 1px solid rgba(255, 255, 255, 0.08);
+}
+.lobby-row.lobby-on  { color: #7ee08a; }
+.lobby-row.lobby-off { color: #9a9a9a; }
+.lobby-row.lobby-ai  { color: #8ab4f8; }

@@ -16,6 +16,9 @@
   </div>
 </div>
 
+<!-- 席位徽章（多人連線模式顯示本家席位／門風） -->
+<div id="seat-badge" class="hidden"></div>
+
 <!-- 牌桌主體 -->
 <div id="table-wrap">
 
@@ -45,6 +48,7 @@
     <!-- 中央：提示 + log -->
     <div id="zone-center">
       <div id="deck-count" title="牌堆剩餘張數">剩 — 張</div>
+      <div id="turn-hint" class="hidden"></div>
       <div id="prompt-card" class="hidden">
         <div id="prompt-title"></div>
         <div id="prompt-buttons"></div>
@@ -79,7 +83,10 @@
 
 <!-- 開始覆蓋層 -->
 <div id="start-overlay">
-  <button id="btn-start" onclick="startGame()">開始對局</button>
+  <div id="start-panel">
+    <div id="lobby-panel" class="hidden"></div>
+    <button id="btn-start" onclick="startGame()">開始對局</button>
+  </div>
 </div>
 
 <!-- 遊戲結束橫幅 -->

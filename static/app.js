@@ -3,6 +3,8 @@
 let _state   = null;
 let _waiting = false;   // 避免重複送出
 let _ws      = null;    // WebSocket 連線
+let _seat    = 0;       // 本連線綁定的席位（多人連線模式由伺服器 hello 指定）
+let _lobby   = null;    // 多人連線大廳狀態；單人模式維持 null
 
 // ── Unicode 麻將符號對照表（U+1F000–U+1F02B） ─────────────────
 const TILE_UNICODE = {
@@ -53,8 +55,26 @@ function connectWS() {
     } else if (msg.t === 'state') {
       _waiting = false;
       renderState(msg.v);
+    } else if (msg.t === 'reset') {
+      // 其他玩家（或自己）開了新局：清空事件並收起覆蓋層
+      document.getElementById('log-box').innerHTML = '';
+      document.getElementById('start-overlay').style.display = 'none';
+      document.getElementById('gameover-banner').style.display = 'none';
+      hidePrompt();
+      setHandEnabled(false);
+    } else if (msg.t === 'hello') {
+      // 多人連線模式：伺服器告知本連接埠綁定的席位
+      _seat  = msg.v.seat ?? 0;
+      _lobby = _lobby || {};
+      Object.assign(_lobby, msg.v);
+      renderSeatBadge();
+      renderLobby();
+    } else if (msg.t === 'lobby') {
+      _lobby = Object.assign(_lobby || {}, msg.v);
+      renderLobby();
     } else if (msg.t === 'error') {
       console.error('WS error:', msg.v);
+      appendLog(`⚠ ${msg.v}`);
       _waiting = false;
     }
   };
@@ -75,6 +95,47 @@ function wsSend(obj) {
     return;
   }
   _ws.send(JSON.stringify(obj));
+}
+
+// ── 視角旋轉：本家永遠在下方，順時針為 下家→對家→上家 ──────────
+/** 回傳 [下, 右, 上, 左] 各方位對應的絕對席位編號。 */
+function zoneSeats(me) {
+  const m = ((me ?? 0) % 4 + 4) % 4;
+  return [m, (m + 1) % 4, (m + 2) % 4, (m + 3) % 4];
+}
+
+// ── 席位徽章與大廳（僅多人連線模式） ─────────────────────────────
+function renderSeatBadge() {
+  const el = document.getElementById('seat-badge');
+  if (!el) return;
+  if (!_lobby) { el.classList.add('hidden'); return; }
+  const wind = (_state && _state.seat_winds && _state.seat_winds.length)
+    ? _state.seat_winds[_seat] : null;
+  el.textContent = wind ? `你：席位 ${_seat}（${wind}家）` : `你：席位 ${_seat}`;
+  el.classList.remove('hidden');
+}
+
+function renderLobby() {
+  const el = document.getElementById('lobby-panel');
+  if (!el || !_lobby) return;
+  const humans    = _lobby.human_seats || [];
+  const connected = _lobby.connected   || [];
+  const ports     = _lobby.seat_ports  || {};
+  const rows = [];
+  for (let s = 0; s < 4; s++) {
+    let who, cls;
+    if (!humans.includes(s)) {
+      who = 'AI'; cls = 'lobby-ai';
+    } else if (connected.includes(s)) {
+      who = s === _seat ? '你（已連線）' : '玩家（已連線）'; cls = 'lobby-on';
+    } else {
+      who = '等待連線…'; cls = 'lobby-off';
+    }
+    const port = ports[String(s)] ? `　:${ports[String(s)]}` : '';
+    rows.push(`<div class="lobby-row ${cls}">席位 ${s}　${who}${port}</div>`);
+  }
+  el.innerHTML = `<div class="lobby-title">連線狀態</div>${rows.join('')}`;
+  el.classList.remove('hidden');
 }
 
 // ── 遊戲流程 ────────────────────────────────────────────────
@@ -118,10 +179,11 @@ const DEALER_BADGE_IDS = ['dealer-bottom', 'dealer-right', 'dealer-top', 'dealer
 
 function updateDealerBadge(state) {
   const consec = state.consecutive ?? 0;
-  DEALER_BADGE_IDS.forEach((id, i) => {
+  const seats  = zoneSeats(state.your_seat ?? _seat);
+  DEALER_BADGE_IDS.forEach((id, zone) => {
     const el = document.getElementById(id);
     if (!el) return;
-    if (i === state.dealer_idx) {
+    if (seats[zone] === state.dealer_idx) {
       el.textContent = `連莊${consec}`;
       el.classList.remove('hidden');
     } else {
@@ -133,6 +195,13 @@ function updateDealerBadge(state) {
 // ── 渲染主控 ────────────────────────────────────────────────
 function renderState(state) {
   _state = state;
+  if (typeof state.your_seat === 'number') _seat = state.your_seat;
+  // 牌局進行中 → 收起開始／結束覆蓋層（別家開新局時本家也要同步）
+  if (state.phase !== 'game_over') {
+    document.getElementById('start-overlay').style.display = 'none';
+    document.getElementById('gameover-banner').style.display = 'none';
+  }
+  renderSeatBadge();
   updateWindBadge(state);
   updateDeckCount(state);
   updateDealerBadge(state);
@@ -151,6 +220,27 @@ function renderState(state) {
     hidePrompt();
     setHandEnabled(state.phase === 'human_discard');
   }
+  updateTurnHint(state);
+}
+
+// ── 輪到誰的提示（多人連線模式） ──────────────────────────────────
+function updateTurnHint(state) {
+  const el = document.getElementById('turn-hint');
+  if (!el) return;
+  const cur = state.current_seat ?? -1;
+  if (cur < 0 || state.phase === 'game_over') {
+    el.classList.add('hidden');
+    return;
+  }
+  const winds = state.seat_winds || [];
+  if (cur === (state.your_seat ?? _seat)) {
+    el.textContent = '輪到你';
+    el.classList.add('my-turn');
+  } else {
+    el.textContent = `等待 ${winds[cur] || `席位 ${cur}`} 行動…`;
+    el.classList.remove('my-turn');
+  }
+  el.classList.remove('hidden');
 }
 
 // ── 剩餘牌數 ────────────────────────────────────────────────
@@ -171,37 +261,43 @@ function updateWindBadge(state) {
   document.getElementById('wind-game').textContent  = gameRoundWind + '風';
   document.getElementById('wind-round').textContent = dealerWind + '局';
 
-  // 各方位門風標籤
+  // 各方位門風標籤（依本家視角旋轉，本家永遠在下方）
   const labels = ['label-bottom', 'label-right', 'label-top', 'label-left'];
-  labels.forEach((id, i) => {
+  const seats  = zoneSeats(state.your_seat ?? _seat);
+  labels.forEach((id, zone) => {
     const el = document.getElementById(id);
-    if (el) el.textContent = winds[i] || '?';
+    if (!el) return;
+    const s = seats[zone];
+    const mine = (s === (state.your_seat ?? _seat)) ? '（你）' : '';
+    el.textContent = (winds[s] || '?') + mine;
   });
 }
 
 // ── 四方位渲染 ───────────────────────────────────────────────
 function renderAllZones(state) {
   const bonus = state.bonus || [[], [], [], []];
+  // [下, 右, 上, 左] → 絕對席位；本家（your_seat）永遠畫在下方
+  const [sBottom, sRight, sTop, sLeft] = zoneSeats(state.your_seat ?? _seat);
 
   renderHandButtons('bottom-hand', state.your_hand, state.phase === 'human_discard', state.drawn_tile_idx ?? null);
-  renderTiles('bottom-melds', flatMelds(state.melds[0]));
-  renderDiscards('bottom-discards', state.discards[0]);
-  renderDiscards('bottom-bonus', bonus[0]);
+  renderTiles('bottom-melds', flatMelds(state.melds[sBottom]));
+  renderDiscards('bottom-discards', state.discards[sBottom]);
+  renderDiscards('bottom-bonus', bonus[sBottom]);
 
-  renderBackTiles('top-hand', state.hand_counts[2]);
-  renderTiles('top-melds', flatMelds(state.melds[2]));
-  renderDiscards('top-discards', state.discards[2]);
-  renderDiscards('top-bonus', bonus[2]);
+  renderBackTiles('top-hand', state.hand_counts[sTop]);
+  renderTiles('top-melds', flatMelds(state.melds[sTop]));
+  renderDiscards('top-discards', state.discards[sTop]);
+  renderDiscards('top-bonus', bonus[sTop]);
 
-  renderBackTiles('left-hand', state.hand_counts[3]);
-  renderTiles('left-melds', flatMelds(state.melds[3]));
-  renderDiscards('left-discards', state.discards[3]);
-  renderDiscards('left-bonus', bonus[3]);
+  renderBackTiles('left-hand', state.hand_counts[sLeft]);
+  renderTiles('left-melds', flatMelds(state.melds[sLeft]));
+  renderDiscards('left-discards', state.discards[sLeft]);
+  renderDiscards('left-bonus', bonus[sLeft]);
 
-  renderBackTiles('right-hand', state.hand_counts[1]);
-  renderTiles('right-melds', flatMelds(state.melds[1]));
-  renderDiscards('right-discards', state.discards[1]);
-  renderDiscards('right-bonus', bonus[1]);
+  renderBackTiles('right-hand', state.hand_counts[sRight]);
+  renderTiles('right-melds', flatMelds(state.melds[sRight]));
+  renderDiscards('right-discards', state.discards[sRight]);
+  renderDiscards('right-bonus', bonus[sRight]);
 }
 
 function flatMelds(melds) {
@@ -421,5 +517,16 @@ function toggleLog() {
 
 // ── 初始化 ───────────────────────────────────────────────────
 document.addEventListener('DOMContentLoaded', () => {
+  // 多人連線模式：先問伺服器本連接埠綁哪一席（單人模式回 404，忽略即可）
+  fetch('/seat')
+    .then(r => (r.ok ? r.json() : null))
+    .then(info => {
+      if (!info) return;
+      _seat  = info.seat ?? 0;
+      _lobby = Object.assign(_lobby || {}, info);
+      renderSeatBadge();
+      renderLobby();
+    })
+    .catch(() => {});
   connectWS();
 });

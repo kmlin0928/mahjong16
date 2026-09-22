@@ -58,6 +58,9 @@ WebSocket 協定（每個連接埠的 ``/ws?t=<token>``）
 
 所有 client → server 的欄位都經過型別與範圍驗證；不合法時只回
 ``{"t": "error", ...}`` 給送出者，**不會影響其他三家、也不會終止牌局**。
+每條連線另有訊息大小上限（``MAX_MSG_BYTES``）、速率限制（``MSG_RATE_LIMIT``
+則／``_RATE_WINDOW`` 秒）與 ``sync`` 冷卻（``SYNC_MIN_INTERVAL`` 秒）；每個
+席位同時連線數上限為 ``MAX_CONNS_PER_SEAT``。
 
 收（client → server）::
 
@@ -65,16 +68,26 @@ WebSocket 協定（每個連接埠的 ``/ws?t=<token>``）
      "seat_winds": [...], "game_round_wind": "東"}
     {"cmd": "discard", "idx": N}
     {"cmd": "action",  "action": "y" | "n" | "chi:N"}
-    {"cmd": "sync"}                       # 重新索取目前盤面
+    {"cmd": "sync", "cursor": N}          # cursor 可省略（0 = 全量重播）
+
+``new_game`` 在牌局進行中是**重開提議**，需所有在線真人各送一次才會生效
+（詳見 :meth:`Table.request_restart`）；沒有牌局在跑時直接開局。
 
 送（server → client）::
 
-    {"t": "hello",  "v": {"seat": N, "seat_wind_hint": null, "human_seats": [...],
+    {"t": "hello",  "v": {"seat": N, "human_seats": [...],
                           "seat_ports": {"0": 8001, ...}, "contest": true}}
-    {"t": "lobby",  "v": {"online": [...], "connected": [...], "running": bool}}
+    {"t": "lobby",  "v": {"connected": [...], "online": [...],
+                          "human_seats": [...], "running": bool}}
+    {"t": "reset",  "v": null}             # 新局開始，前端清空事件與覆蓋層
     {"t": "log",    "v": "<事件文字>"}     # 多次
     {"t": "state",  "v": <GameState dict>} # 一次，收尾
-    {"t": "error",  "v": "<訊息>"}
+    {"t": "error",  "v": {"code": "<錯誤碼>", "message": "<給玩家看的說明>"}}
+
+錯誤碼（``code``）供程式判斷該重送、提示使用者還是放棄：``bad_json``、
+``bad_shape``、``message_too_large``、``rate_limited``、``unknown_command``、
+``bad_parameter``、``not_your_turn``、``restart_pending``、``internal_error``。
+``internal_error`` 只帶通用訊息，完整 traceback 寫在伺服器日誌。
 """
 from __future__ import annotations
 
@@ -82,10 +95,12 @@ import argparse
 import asyncio
 import contextlib
 import dataclasses
+import json
+import logging
 import secrets
 import signal
 import sys
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from pathlib import Path
 from urllib.parse import urlsplit
 
@@ -108,12 +123,54 @@ SEAT_COUNT = 4
 _POLL_INTERVAL = 0.5          # 等待玩家回應時的輪詢間隔（秒）
 _TOKEN_BYTES = 24             # 席位 token 長度（secrets.token_urlsafe 的參數）
 
+logger = logging.getLogger("net_mahjong")
+
+# ── 資源上限（防止單一連線拖垮整桌）──────────────────────────────
+MAX_MSG_BYTES = 64 * 1024     # 單則 client 訊息大小上限
+MAX_CONNS_PER_SEAT = 2        # 每席同時連線數上限（容許換裝置時短暫重疊）
+MSG_RATE_LIMIT = 30           # 每 _RATE_WINDOW 秒最多處理幾則訊息
+_RATE_WINDOW = 5.0
+SYNC_MIN_INTERVAL = 2.0       # 兩次 sync（全量重播）之間的最短間隔（秒）
+RESTART_VOTE_SECONDS = 90.0   # 重開提議的有效時間
+
+# 送給客戶端的錯誤碼（機器可判讀；中文訊息僅供顯示）
+ERR_BAD_JSON = "bad_json"
+ERR_BAD_SHAPE = "bad_shape"
+ERR_TOO_LARGE = "message_too_large"
+ERR_RATE_LIMITED = "rate_limited"
+ERR_UNKNOWN_CMD = "unknown_command"
+ERR_BAD_PARAM = "bad_parameter"
+ERR_NOT_YOUR_TURN = "not_your_turn"
+ERR_INTERNAL = "internal_error"
+ERR_RESTART_PENDING = "restart_pending"
+
 # WebSocket 拒絕碼（4000–4999 為應用自訂範圍）。
 # 注意：在 accept() 之前關閉時，uvicorn 會把它轉成 HTTP 403 握手失敗回應，
 # 客戶端看到的是 403 而不是這裡的碼——這是刻意的：連線根本不會被建立，
 # 未通過驗證的對方拿不到任何牌局資訊。這兩個常數用於伺服器端區分原因。
 WS_CLOSE_UNAUTHORIZED = 4401  # token 缺漏或不符
 WS_CLOSE_BAD_ORIGIN = 4403    # Origin 與 Host 不符（疑似 CSWSH）
+WS_CLOSE_TOO_MANY = 4429      # 該席位連線數已達上限
+
+
+def err_payload(code: str, message: str, **extra) -> dict:
+    """組出結構化的錯誤訊息。
+
+    客戶端靠 ``code`` 判斷該怎麼處理（重送、提示使用者、還是放棄），
+    ``message`` 只供顯示。內部細節（traceback、例外型別）一律不放進來，
+    改寫進伺服器日誌。
+
+    Args:
+        code:    機器可判讀的錯誤碼（``ERR_*`` 常數）
+        message: 給玩家看的中文說明
+        extra:   附加欄位（例如 ``waiting_seat``）
+
+    Returns:
+        可直接 ``send_json`` 的 ``{"t": "error", "v": {...}}``。
+    """
+    v = {"code": code, "message": message}
+    v.update(extra)
+    return {"t": "error", "v": v}
 
 
 def display_host(host: str) -> str:
@@ -176,13 +233,40 @@ class Connection:
     """一條玩家的 WebSocket 連線。
 
     Attributes:
-        ws:     WebSocket 物件
-        seat:   綁定席位（由連接埠決定，client 不可更改）
-        cursor: 事件流游標（已推送到第幾筆 ``GameSession`` 事件）
+        ws:          WebSocket 物件
+        seat:        綁定席位（由連接埠決定，client 不可更改）
+        cursor:      事件流游標（已推送到第幾筆 ``GameSession`` 事件）
+        _msg_times:  最近處理過的訊息時刻（速率限制用）
+        _last_sync:  上次執行全量 sync 的時刻
     """
     ws: WebSocket
     seat: int
     cursor: int = 0
+    _msg_times: list[float] = field(default_factory=list)
+    _last_sync: float = 0.0
+
+    def allow_message(self, now: float) -> bool:
+        """滑動視窗速率限制：``_RATE_WINDOW`` 秒內最多 ``MSG_RATE_LIMIT`` 則。
+
+        Args:
+            now: 目前時刻（``loop.time()``）
+
+        Returns:
+            可以處理這則訊息時為 True。
+        """
+        cutoff = now - _RATE_WINDOW
+        self._msg_times = [t for t in self._msg_times if t > cutoff]
+        if len(self._msg_times) >= MSG_RATE_LIMIT:
+            return False
+        self._msg_times.append(now)
+        return True
+
+    def allow_sync(self, now: float) -> bool:
+        """``sync`` 會重播開局以來的全部事件，因此另外設一道冷卻。"""
+        if now - self._last_sync < SYNC_MIN_INTERVAL:
+            return False
+        self._last_sync = now
+        return True
 
 
 @dataclass
@@ -341,8 +425,15 @@ class Table:
         self._session: GameSession | None = None
         self._pending: Pending | None = None
         self._driver: asyncio.Task | None = None
-        self._lock = asyncio.Lock()
+        self._lock = asyncio.Lock()          # 保護 GameSession 的讀寫
+        # 另一把鎖：序列化 start_game 本身。不能沿用 _lock——_run_game 持有
+        # _lock 的期間 start_game 需要取消它並等它結束，共用一把會死鎖。
+        self._start_lock = asyncio.Lock()
         self._started_once = False
+        # 對局進行中的重開提議：{同意的席位} 與提議時刻
+        self._restart_votes: set[int] = set()
+        self._restart_since: float = 0.0
+        self._restart_opts: TableOptions | None = None
 
     # ------------------------------------------------------------------
     # 連線管理
@@ -367,6 +458,14 @@ class Table:
         if not expected or not token:
             return False
         return secrets.compare_digest(token, expected)
+
+    def seat_full(self, seat: int) -> bool:
+        """該席位的連線數是否已達上限。
+
+        沒有上限時，任何拿到 token 的人都能無限開連線，每條都進
+        :meth:`broadcast_state` 的迴圈，是最便宜的資源耗盡途徑。
+        """
+        return len(self._conns.get(seat, [])) >= MAX_CONNS_PER_SEAT
 
     def seat_url(self, host: str, seat: int) -> str:
         """組出該席位的完整入場網址（含 token）。
@@ -434,11 +533,19 @@ class Table:
                 await self._safe_send(conn, payload)
 
     async def _safe_send(self, conn: Connection, payload: dict) -> None:
-        """送出訊息，連線已斷則安靜忽略。"""
+        """送出訊息；對方已斷線是預期情形，其餘例外一律記錄。
+
+        以前這裡是 ``except Exception: pass``，把「payload 無法序列化」之類的
+        程式錯誤一併吞掉——玩家只看到畫面不動，伺服器端卻一片安靜。現在只有
+        已知的斷線例外會被靜默忽略。
+        """
         try:
             await conn.ws.send_json(payload)
+        except (WebSocketDisconnect, ConnectionError, RuntimeError):
+            pass                       # 對方已斷線／socket 已關閉，屬預期
         except Exception:
-            pass
+            logger.exception("推送失敗（seat=%s, t=%s）", conn.seat,
+                             payload.get("t"))
 
     # ------------------------------------------------------------------
     # 盤面推送
@@ -484,13 +591,109 @@ class Table:
     # 牌局驅動
     # ------------------------------------------------------------------
 
+    @property
+    def game_running(self) -> bool:
+        """是否有牌局正在進行。"""
+        return self._driver is not None and not self._driver.done()
+
+    async def request_restart(self, seat: int, opts: TableOptions) -> str | None:
+        """處理某席位的 ``new_game``。
+
+        沒有牌局在跑時（開局前、上一局已結束）直接開局——「下一局／連莊」是
+        最常見的情境，不該有任何摩擦。
+
+        牌局進行中則視為**重開提議**：其他三家正在打的牌會被作廢，所以要所有
+        在線真人都同意才執行。玩家只要各自按一次「開始對局」就是投一票，不需
+        要前端改任何東西。提議超過 ``RESTART_VOTE_SECONDS`` 自動失效。
+
+        Args:
+            seat: 送出 ``new_game`` 的席位
+            opts: 開局參數（由第一位提議者的參數為準）
+
+        Returns:
+            已開局時回傳 None；只是記錄一票時回傳給該玩家的說明訊息。
+        """
+        async with self._start_lock:
+            return await self._request_restart_locked(seat, opts)
+
+    async def _request_restart_locked(
+        self, seat: int, opts: TableOptions
+    ) -> str | None:
+        """（需持有 _start_lock）:meth:`request_restart` 的實作。"""
+        if not self.game_running:
+            self._clear_restart_vote()
+            await self._start_game_unlocked(opts)
+            return None
+
+        now = asyncio.get_running_loop().time()
+        if self._restart_votes and now - self._restart_since > RESTART_VOTE_SECONDS:
+            self._clear_restart_vote()          # 舊提議已逾時，重新計票
+        if not self._restart_votes:
+            self._restart_since = now
+            self._restart_opts = opts
+        self._restart_votes.add(seat)
+
+        voters = sorted(self._restart_votes)
+        need = self.online_human_seats
+        label = self._seat_label(seat)
+        if all(s in self._restart_votes for s in need):
+            self._note_all(f"{label} 要求重新開局，全體同意（{len(voters)}/{len(need)}），重開")
+            start_opts = self._restart_opts or opts
+            self._clear_restart_vote()
+            await self._start_game_unlocked(start_opts)
+            return None
+
+        waiting = [self._seat_label(s) for s in need if s not in self._restart_votes]
+        self._note_all(
+            f"{label} 要求重新開局（{len(voters)}/{len(need)} 同意）"
+            f"，等待：{'、'.join(waiting)}"
+        )
+        await self.broadcast_state()
+        return (f"已送出重開提議，等待 {'、'.join(waiting)} 也按下「開始對局」"
+                f"（{RESTART_VOTE_SECONDS:g} 秒內有效）")
+
+    @property
+    def online_human_seats(self) -> list[int]:
+        """目前有連線的真人席位；全都離線時退回全部真人席位。"""
+        connected = self.connected_seats
+        return connected if connected else list(self.seats)
+
+    def _seat_label(self, seat: int) -> str:
+        """席位的顯示名稱（有牌局時用門風，否則用座位編號）。"""
+        if self._session is not None:
+            return self._session.seat_wind(seat)
+        return f"座位 {seat}"
+
+    def _note_all(self, msg: str) -> None:
+        """把一則公開事件寫進事件流（沒有牌局時略過）。"""
+        if self._session is not None:
+            self._session.note(msg)
+
+    def _clear_restart_vote(self) -> None:
+        """清掉重開提議的計票狀態。"""
+        self._restart_votes.clear()
+        self._restart_since = 0.0
+        self._restart_opts = None
+
     async def start_game(self, opts: TableOptions) -> None:
-        """（重新）開局：取消舊的 driver，建立新的 GameSession 並推進。"""
+        """（重新）開局：取消舊的 driver，建立新的 GameSession 並推進。
+
+        整段以 :attr:`_start_lock` 序列化。先前沒有鎖，兩位玩家同時開局時，
+        兩個協程會在 ``await self._driver`` 與送 ``reset`` 的 await 點交錯，
+        各自建立一個 driver task 而 ``self._driver`` 只留下後寫入的那個——
+        被覆蓋的 driver 不會被取消，會繼續跑、繼續寫 ``self._session``。
+        """
+        async with self._start_lock:
+            await self._start_game_unlocked(opts)
+
+    async def _start_game_unlocked(self, opts: TableOptions) -> None:
+        """（需持有 _start_lock）實際執行開局。"""
         if self._driver is not None and not self._driver.done():
             self._driver.cancel()
             with contextlib.suppress(asyncio.CancelledError):
                 await self._driver
         self._pending = None
+        self._clear_restart_vote()
         for conn_list in self._conns.values():
             for conn in conn_list:
                 conn.cursor = 0
@@ -527,18 +730,24 @@ class Table:
                     state = await asyncio.to_thread(session.respond, resp)
         except asyncio.CancelledError:
             raise
-        except Exception as exc:  # pragma: no cover - 防止 driver 靜默死亡
-            await self._broadcast_error(f"牌局發生錯誤：{exc!r}")
+        except Exception:  # pragma: no cover - 防止 driver 靜默死亡
+            # 對外只送通用訊息：例外的 repr 會夾帶內部細節（型別、原始輸入、
+            # 路徑），沒有理由送給遠端玩家。完整 traceback 寫進伺服器日誌。
+            logger.exception("牌局 driver 異常終止（seats=%s）", self.seats)
+            await self._broadcast_error(
+                ERR_INTERNAL, "牌局發生非預期錯誤，請重新開局"
+            )
             raise
         finally:
             self._pending = None
         await self.broadcast_lobby()
 
-    async def _broadcast_error(self, msg: str) -> None:
-        """把錯誤訊息推給所有連線。"""
+    async def _broadcast_error(self, code: str, msg: str) -> None:
+        """把結構化錯誤訊息推給所有連線。"""
+        payload = err_payload(code, msg)
         for seat in self.seats:
             for conn in list(self._conns[seat]):
-                await self._safe_send(conn, {"t": "error", "v": msg})
+                await self._safe_send(conn, payload)
 
     async def _await_response(self, seat: int) -> str:
         """等待指定席位回應；離線或逾時則改由 AI 代打。
@@ -784,40 +993,86 @@ def create_seat_app(table: Table, seat: int) -> FastAPI:
         if not table.check_token(seat, token):
             await ws.close(code=WS_CLOSE_UNAUTHORIZED)
             return
+        if table.seat_full(seat):
+            await ws.close(code=WS_CLOSE_TOO_MANY)
+            return
 
         await ws.accept()
         conn = Connection(ws=ws, seat=seat)
         await table.attach(conn)
+        loop = asyncio.get_running_loop()
         try:
             while True:
-                msg = await ws.receive_json()
+                # 用底層的 receive() 而非 receive_json()：先看型別與大小再決定
+                # 要不要解析，而且 JSON 解析失敗由我們自己處理，不會變成未捕捉
+                # 例外把連線炸掉（客戶端只會看到 1006，收不到任何說明）。
+                message = await ws.receive()
+                if message["type"] == "websocket.disconnect":
+                    break
+                raw = message.get("text")
+                if raw is None:
+                    await ws.send_json(err_payload(
+                        ERR_BAD_SHAPE, "只接受文字訊息（不支援二進位框）"))
+                    continue
+                if len(raw) > MAX_MSG_BYTES:
+                    await ws.send_json(err_payload(
+                        ERR_TOO_LARGE,
+                        f"訊息過長（上限 {MAX_MSG_BYTES // 1024} KB）"))
+                    continue
+                if not conn.allow_message(loop.time()):
+                    await ws.send_json(err_payload(
+                        ERR_RATE_LIMITED, "操作過於頻繁，請稍候再試"))
+                    continue
+                try:
+                    msg = json.loads(raw)
+                except ValueError:
+                    await ws.send_json(err_payload(
+                        ERR_BAD_JSON, "訊息不是合法的 JSON"))
+                    continue
                 if not isinstance(msg, dict):
-                    await ws.send_json({"t": "error", "v": "訊息需為 JSON 物件"})
+                    await ws.send_json(err_payload(
+                        ERR_BAD_SHAPE, "訊息需為 JSON 物件"))
                     continue
                 cmd = msg.get("cmd")
 
                 if cmd == "new_game":
                     opts, opts_err = TableOptions.from_msg(msg, table.contest)
                     if opts_err is not None:
-                        await ws.send_json({"t": "error", "v": opts_err})
+                        await ws.send_json(err_payload(ERR_BAD_PARAM, opts_err))
                         continue
                     assert opts is not None
-                    await table.start_game(opts)
+                    pending_msg = await table.request_restart(seat, opts)
+                    if pending_msg:
+                        await ws.send_json(err_payload(
+                            ERR_RESTART_PENDING, pending_msg))
                 elif cmd == "discard":
                     err = table.submit_discard(seat, msg.get("idx"))
                     if err:
-                        await ws.send_json({"t": "error", "v": err})
+                        await ws.send_json(err_payload(ERR_NOT_YOUR_TURN, err))
                 elif cmd == "action":
                     err = table.submit_action(seat, msg.get("action"))
                     if err:
-                        await ws.send_json({"t": "error", "v": err})
+                        await ws.send_json(err_payload(ERR_NOT_YOUR_TURN, err))
                 elif cmd == "sync":
-                    conn.cursor = 0
+                    if not conn.allow_sync(loop.time()):
+                        await ws.send_json(err_payload(
+                            ERR_RATE_LIMITED, "同步過於頻繁，請稍候再試"))
+                        continue
+                    cursor = msg.get("cursor")
+                    conn.cursor = cursor if isinstance(cursor, int) and cursor >= 0 else 0
                     await table.sync(conn)
                 else:
-                    await ws.send_json({"t": "error", "v": f"未知指令: {cmd!r}"})
+                    await ws.send_json(err_payload(
+                        ERR_UNKNOWN_CMD, f"未知指令：{cmd!r}"))
         except WebSocketDisconnect:
             pass
+        except Exception:
+            # 任何非預期例外都不該讓連線無聲中斷（客戶端只會看到 1006）。
+            logger.exception("WebSocket 處理迴圈異常（seat=%s）", seat)
+            with contextlib.suppress(Exception):
+                await ws.send_json(err_payload(
+                    ERR_INTERNAL, "伺服器發生非預期錯誤，連線即將關閉"))
+                await ws.close(code=1011)
         finally:
             await table.detach(conn)
 
@@ -921,7 +1176,11 @@ def resolve_seats_ports(args: argparse.Namespace) -> tuple[list[int], dict[int, 
     if len(set(ports)) != len(ports):
         raise SystemExit(f"連接埠不可重複：{ports}")
 
-    return sorted(seats), dict(zip(sorted(seats), ports))
+    # 先把「使用者寫的第 i 個席位」與「第 i 個連接埠」配成對，再排序。
+    # 原本是 zip(sorted(seats), ports)，`--seats 2 0 --ports 9000 9001` 會被
+    # 悄悄解讀成「席位 0 用 9000」，與使用者輸入的順序相反且沒有任何警告。
+    pairs = sorted(zip(seats, ports, strict=True))
+    return [s for s, _ in pairs], dict(pairs)
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -956,6 +1215,12 @@ def build_parser() -> argparse.ArgumentParser:
                    help="玩家在線但未回應幾秒後由 AI 代打；0 表不限時（預設 0）")
     p.add_argument("--no-auto-start", dest="auto_start", action="store_false",
                    help="所有玩家連上線時不自動開局，改由任一玩家按「開始對局」")
+    p.add_argument("--max-conns-per-seat", type=int, default=MAX_CONNS_PER_SEAT,
+                   help=f"每個席位同時允許的連線數（預設 {MAX_CONNS_PER_SEAT}）")
+    p.add_argument("--log-level", default="warning",
+                   choices=["debug", "info", "warning", "error"],
+                   help="伺服器日誌層級（預設 warning；內部錯誤的完整 traceback "
+                        "一律寫在這裡，不會送給玩家）")
     p.set_defaults(contest=True, auto_start=True)
     return p
 
@@ -964,6 +1229,15 @@ def main(argv: list[str] | None = None) -> int:
     """命令列進入點。"""
     args = build_parser().parse_args(argv)
     seats, seat_ports = resolve_seats_ports(args)
+
+    logging.basicConfig(
+        level=getattr(logging, args.log_level.upper()),
+        format="%(asctime)s %(levelname)-8s %(name)s: %(message)s",
+    )
+    if args.max_conns_per_seat < 1:
+        raise SystemExit("--max-conns-per-seat 至少為 1")
+    global MAX_CONNS_PER_SEAT
+    MAX_CONNS_PER_SEAT = args.max_conns_per_seat
 
     table = Table(
         seats=seats,

@@ -22,12 +22,15 @@
 6. 端到端：實際開兩個連接埠，兩個 WebSocket 玩家打完一整盤。
 7. 存取控制（SEC-1／SEC-2）：席位 token 與 Origin 檢查。
 8. 輸入驗證（ERR-1／ERR-2）：畸形的 ``discard`` / ``new_game`` 不會終止牌局。
+9. Major 修補：結構化錯誤與日誌、訊息大小／速率／連線數上限、
+   start_game 互斥、對局中重開需全體同意、CLI 席位與連接埠的配對順序。
 """
 from __future__ import annotations
 
 import asyncio
 import contextlib
 import json
+import logging
 import random
 import sys
 import urllib.error
@@ -373,6 +376,25 @@ async def _ws_rejected(url: str, **kw) -> bool:
     return False
 
 
+@contextlib.contextmanager
+def _captured_logs():
+    """暫時攔截 net_mahjong 的日誌輸出，回傳收集到的訊息列表。"""
+    lines: list[str] = []
+
+    class _Sink(logging.Handler):
+        def emit(self, record: logging.LogRecord) -> None:
+            lines.append(record.getMessage())
+
+    handler = _Sink()
+    nm.logger.addHandler(handler)
+    previous, nm.logger.propagate = nm.logger.propagate, False
+    try:
+        yield lines
+    finally:
+        nm.logger.removeHandler(handler)
+        nm.logger.propagate = previous
+
+
 def _http(port: int, path: str, cookie: str | None = None) -> tuple[int, str, str | None]:
     """發一個同步 HTTP GET，回傳 (狀態碼, 內文, Set-Cookie)。"""
     req = urllib.request.Request(f"http://{HOST}:{port}{path}")
@@ -661,6 +683,219 @@ async def test_malformed_input_does_not_kill_table() -> None:
 
 
 # ---------------------------------------------------------------------------
+# 9. Major 修補（ERR-3 / ERR-4 / ERR-5 / SEC-3 / SEC-4 / DES-1 / Q-1）
+# ---------------------------------------------------------------------------
+
+def test_seats_ports_pairing() -> None:
+    """Q-1：--seats 與 --ports 依使用者輸入的順序配對，不被 sorted() 重排。"""
+    p = nm.build_parser()
+    seats, ports = nm.resolve_seats_ports(
+        p.parse_args(["--seats", "2", "0", "--ports", "9000", "9001"]))
+    assert ports == {2: 9000, 0: 9001}, ports       # 席位 2 用使用者寫的第一個埠
+    assert seats == [0, 2], seats                   # 席位列表仍為升冪
+    seats, ports = nm.resolve_seats_ports(
+        p.parse_args(["--seats", "0", "2", "--ports", "9000", "9001"]))
+    assert ports == {0: 9000, 2: 9001}, ports
+    assert nm.resolve_seats_ports(p.parse_args(["--players", "2"]))[1] == {0: 8001, 1: 8002}
+    print("  --seats 2 0 --ports 9000 9001 → 席位2=9000、席位0=9001")
+
+
+def test_error_payload_shape() -> None:
+    """SEC-3：錯誤一律結構化，且不夾帶內部細節。"""
+    payload = nm.err_payload(nm.ERR_BAD_PARAM, "dealer_idx 僅接受 0–3", waiting_seat=2)
+    assert payload["t"] == "error"
+    assert payload["v"]["code"] == "bad_parameter"
+    assert payload["v"]["waiting_seat"] == 2
+    assert "message" in payload["v"]
+    print("  err_payload 帶 code / message / 附加欄位")
+
+
+async def test_safe_send_logs_unexpected(capture_logs: "list[str]") -> None:
+    """ERR-4：_safe_send 只靜默吞斷線例外，其餘寫入日誌。"""
+    table = nm.Table(seats=[0], seat_ports={0: 1}, contest=True, auto_start=False)
+
+    class _Disconnected:
+        async def send_json(self, payload):
+            raise nm.WebSocketDisconnect(code=1000)
+
+    class _Broken:
+        async def send_json(self, payload):
+            raise TypeError("Object of type set is not JSON serializable")
+
+    await table._safe_send(nm.Connection(ws=_Disconnected(), seat=0), {"t": "x"})
+    assert not capture_logs, f"斷線不該產生日誌：{capture_logs}"
+    await table._safe_send(nm.Connection(ws=_Broken(), seat=0), {"t": "x"})
+    assert any("推送失敗" in line for line in capture_logs), capture_logs
+    print("  斷線靜默、序列化錯誤寫日誌")
+
+
+async def test_start_game_mutex() -> None:
+    """ERR-5：同時 new_game 只會留下一個 driver task。"""
+
+    class _SlowWS:
+        """send_json 內含 await，重現 start_game 的協程交錯窗口。"""
+
+        def __init__(self) -> None:
+            self.sent: list[dict] = []
+
+        async def send_json(self, payload):
+            await asyncio.sleep(0)
+            self.sent.append(payload)
+
+    random.seed(5)
+    table = nm.Table(seats=[0, 1], seat_ports={0: 1, 1: 2}, contest=True,
+                     auto_start=False)
+    for seat in (0, 1):
+        table._conns[seat].append(nm.Connection(ws=_SlowWS(), seat=seat))
+    await table.start_game(nm.TableOptions())
+    await asyncio.sleep(0.5)
+
+    # 兩位玩家同時按「開始對局」
+    await asyncio.gather(
+        table.start_game(nm.TableOptions()),
+        table.start_game(nm.TableOptions()),
+    )
+    await asyncio.sleep(0.5)
+    alive = [t for t in asyncio.all_tasks()
+             if t.get_coro().__qualname__.endswith("_run_game") and not t.done()]
+    assert len(alive) == 1, f"應只剩 1 個 driver，實得 {len(alive)}"
+    assert table._driver in alive, "存活的 driver 應就是 table._driver"
+    for t in alive:
+        t.cancel()
+    with contextlib.suppress(asyncio.CancelledError):
+        await table._driver
+    print("  同時 new_game 後仍只有 1 個 driver task")
+
+
+async def test_message_intake() -> None:
+    """ERR-3 / SEC-4：畸形、超長、超頻的訊息都被結構化錯誤擋下且不斷線。"""
+    port = SEC_PORT + 10
+    async with _one_seat_server(port, SEC_TOKEN):
+        async with _ProbeClient(port, SEC_TOKEN) as c:
+            cases = [
+                ("這不是 JSON", nm.ERR_BAD_JSON, "非 JSON 文字"),
+                ("[1,2,3]", nm.ERR_BAD_SHAPE, "JSON 陣列"),
+                ('"字串"', nm.ERR_BAD_SHAPE, "JSON 字串"),
+                ("123", nm.ERR_BAD_SHAPE, "JSON 數字"),
+                (json.dumps({"cmd": "漏洞"}), nm.ERR_UNKNOWN_CMD, "未知指令"),
+                (json.dumps({"cmd": "discard",
+                             "idx": 0, "pad": "x" * (nm.MAX_MSG_BYTES + 10)}),
+                 nm.ERR_TOO_LARGE, "超長訊息"),
+            ]
+            for payload, code, label in cases:
+                assert c.ws is not None
+                await c.ws.send(payload)
+                replies = await c.drain(2.0)
+                errs = [r for r in replies if r["t"] == "error"]
+                assert errs, f"{label} 應回報錯誤，實得 {replies}"
+                assert errs[0]["v"]["code"] == code, (label, errs[0]["v"])
+            # 連線仍活著：合法指令照常運作
+            replies = await c.send({"cmd": "sync"})
+            assert not [r for r in replies if r["t"] == "error"], replies
+            print(f"  {len(cases)} 種畸形訊息各自回對應錯誤碼，連線未中斷")
+
+            # 速率限制：連送超過上限
+            assert c.ws is not None
+            for _ in range(nm.MSG_RATE_LIMIT + 5):
+                await c.ws.send(json.dumps({"cmd": "action", "action": "n"}))
+            replies = await c.drain(3.0)
+            limited = [r for r in replies
+                       if r["t"] == "error" and r["v"]["code"] == nm.ERR_RATE_LIMITED]
+            assert limited, "超過速率上限應回 rate_limited"
+            print(f"  連送 {nm.MSG_RATE_LIMIT + 5} 則後觸發 rate_limited（{len(limited)} 則）")
+
+
+async def test_conn_limit() -> None:
+    """SEC-4：每席連線數達上限後拒絕新連線。"""
+    port = SEC_PORT + 11
+    original = nm.MAX_CONNS_PER_SEAT
+    nm.MAX_CONNS_PER_SEAT = 2
+    try:
+        async with _one_seat_server(port, SEC_TOKEN):
+            url = f"ws://{HOST}:{port}/ws?t={SEC_TOKEN}"
+            opened = [await websockets.connect(url) for _ in range(2)]
+            try:
+                assert await _ws_rejected(url), "第 3 條連線應被拒絕"
+                await opened.pop().close()
+                await asyncio.sleep(0.5)          # 等伺服器處理 detach
+                assert not await _ws_rejected(url), "釋出名額後應可再連上"
+            finally:
+                for ws in opened:
+                    await ws.close()
+    finally:
+        nm.MAX_CONNS_PER_SEAT = original
+    print("  每席上限 2 條：第 3 條被拒，釋出後可再連")
+
+
+async def test_restart_requires_consensus() -> None:
+    """DES-1：對局中重開需所有在線真人同意；未開局時直接開局。"""
+    ports = {0: SEC_PORT + 12, 1: SEC_PORT + 13}
+    table = nm.Table(seats=[0, 1], seat_ports=ports, contest=True,
+                     auto_start=False, seat_tokens=dict(TOKENS))
+    stop = asyncio.Event()
+    server = asyncio.create_task(_serve_ports(table, ports, stop))
+    await _wait_port(HOST, ports[0])
+    try:
+        async with _ProbeClient(ports[0], TOKENS[0]) as c0, \
+                   _ProbeClient(ports[1], TOKENS[1]) as c1:
+            # 1) 未開局 → 直接開局，不需投票
+            await c0.send({"cmd": "new_game"}, timeout=3.0)
+            assert table.game_running, "未開局時 new_game 應直接開局"
+            first_driver = table._driver
+
+            # 2) 對局中單方提議 → 只記票，牌局不變
+            replies = await c0.send({"cmd": "new_game"}, timeout=3.0)
+            pending = [r for r in replies if r["t"] == "error"
+                       and r["v"]["code"] == nm.ERR_RESTART_PENDING]
+            assert pending, f"對局中單方 new_game 應回 restart_pending，實得 {replies}"
+            assert table._driver is first_driver, "單方提議不該重開牌局"
+            assert table._restart_votes == {0}, table._restart_votes
+
+            # 3) 另一家也同意 → 重開
+            await c1.send({"cmd": "new_game"}, timeout=4.0)
+            await asyncio.sleep(0.5)
+            assert table._driver is not first_driver, "全體同意後應重開"
+            assert not table._restart_votes, "重開後計票應清空"
+            assert first_driver.cancelled() or first_driver.done(), "舊 driver 應被取消"
+        print("  未開局直接開；對局中需 2/2 同意才重開")
+    finally:
+        stop.set()
+        with contextlib.suppress(Exception):
+            await asyncio.wait_for(server, timeout=10)
+        await table.shutdown()
+
+
+async def _wait_port(host: str, port: int) -> None:
+    """等連接埠就緒。"""
+    for _ in range(100):
+        await asyncio.sleep(0.05)
+        try:
+            _, writer = await asyncio.open_connection(host, port)
+        except OSError:
+            continue
+        writer.close()
+        return
+
+
+async def _serve_ports(table: nm.Table, ports: dict[int, int],
+                       stop: asyncio.Event) -> None:
+    """在背景跑起指定席位的服務，直到 stop 被設定。"""
+    servers = [
+        nm._SharedSignalServer(
+            nm.uvicorn.Config(nm.create_seat_app(table, seat), host=HOST,
+                              port=port, log_level="critical")
+        )
+        for seat, port in ports.items()
+    ]
+    task = asyncio.gather(*(srv.serve() for srv in servers))
+    await stop.wait()
+    for srv in servers:
+        srv.should_exit = True
+    with contextlib.suppress(Exception):
+        await asyncio.wait_for(task, timeout=10)
+
+
+# ---------------------------------------------------------------------------
 
 def main() -> int:
     """依序執行所有測試。"""
@@ -685,6 +920,15 @@ def main() -> int:
     test_engine_response_validation()
     test_new_game_option_validation()
     asyncio.run(test_malformed_input_does_not_kill_table())
+    print("[9] Major 修補（錯誤處理／資源上限／重開授權／CLI）")
+    test_seats_ports_pairing()
+    test_error_payload_shape()
+    with _captured_logs() as lines:
+        asyncio.run(test_safe_send_logs_unexpected(lines))
+    asyncio.run(test_start_game_mutex())
+    asyncio.run(test_message_intake())
+    asyncio.run(test_conn_limit())
+    asyncio.run(test_restart_requires_consensus())
     print("\n全部通過")
     return 0
 

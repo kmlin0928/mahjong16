@@ -73,8 +73,10 @@ function connectWS() {
       _lobby = Object.assign(_lobby || {}, msg.v);
       renderLobby();
     } else if (msg.t === 'error') {
+      // 伺服器的錯誤格式為 { code, message }；舊格式（純字串）也一併相容
+      const text = (msg.v && typeof msg.v === 'object') ? msg.v.message : msg.v;
       console.error('WS error:', msg.v);
-      appendLog(`⚠ ${msg.v}`);
+      appendLog(`⚠ ${text}`);
       _waiting = false;
     }
   };

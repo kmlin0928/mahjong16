@@ -1809,6 +1809,104 @@ def player_label(
 
 
 # ---------------------------------------------------------------------------
+# 開局參數驗證（第二道防線：參數可能源自遠端客戶端）
+# ---------------------------------------------------------------------------
+
+MAX_CONSECUTIVE: int = 63   # 連莊次數上限（僅為防呆，正常牌局遠低於此）
+
+
+def _validate_seat_or_none(value: object, field: str) -> int | None:
+    """驗證「席位或 None」型參數（0–3）。
+
+    Args:
+        value: 待驗證值；None 表示不指定
+        field: 欄位名稱（錯誤訊息用）
+
+    Returns:
+        驗證後的席位整數，或 None。
+
+    Raises:
+        ValueError: 型別錯誤或超出 0–3。``bool`` 不視為合法整數。
+    """
+    if value is None:
+        return None
+    if isinstance(value, bool) or not isinstance(value, int):
+        raise ValueError(f"{field} 需為整數，收到 {type(value).__name__}")
+    if not 0 <= value < 4:
+        raise ValueError(f"{field} 僅接受 0–3，收到 {value}")
+    return value
+
+
+def _validate_consecutive(value: object) -> int:
+    """驗證連莊次數（0–``MAX_CONSECUTIVE`` 的整數）。
+
+    Raises:
+        ValueError: 型別錯誤或超出範圍。
+    """
+    if isinstance(value, bool) or not isinstance(value, int):
+        raise ValueError(f"consecutive 需為整數，收到 {type(value).__name__}")
+    if not 0 <= value <= MAX_CONSECUTIVE:
+        raise ValueError(f"consecutive 僅接受 0–{MAX_CONSECUTIVE}，收到 {value}")
+    return value
+
+
+def _validate_wind_or_none(value: object, field: str) -> str | None:
+    """驗證「門風／圈風或 None」型參數（東／南／西／北）。
+
+    Raises:
+        ValueError: 非字串或不是四個合法風名之一。
+    """
+    if value is None:
+        return None
+    if not isinstance(value, str) or value not in _SEAT_WIND_NAMES:
+        raise ValueError(
+            f"{field} 僅接受 {'／'.join(_SEAT_WIND_NAMES)}，收到 {value!r}"
+        )
+    return value
+
+
+def _validate_seat_winds(value: object) -> list[str] | None:
+    """驗證四家門風列表：恰好 4 項、皆為合法風名且互不重複。
+
+    Raises:
+        ValueError: 長度、型別或內容不合法。
+    """
+    if value is None:
+        return None
+    if not isinstance(value, (list, tuple)):
+        raise ValueError(f"seat_winds 需為四個門風的列表，收到 {type(value).__name__}")
+    winds = list(value)
+    if len(winds) != 4:
+        raise ValueError(f"seat_winds 需恰好 4 項，收到 {len(winds)} 項")
+    for w in winds:
+        if not isinstance(w, str) or w not in _SEAT_WIND_NAMES:
+            raise ValueError(
+                f"seat_winds 僅接受 {'／'.join(_SEAT_WIND_NAMES)}，收到 {w!r}"
+            )
+    if len(set(winds)) != 4:
+        raise ValueError(f"seat_winds 四家門風不可重複：{winds}")
+    return winds
+
+
+def _validate_human_seats(value: Iterable[int]) -> set[int]:
+    """驗證真人席位集合：1–4 個、皆為 0–3 的整數。
+
+    Raises:
+        ValueError: 空集合、型別錯誤或超出 0–3。
+    """
+    seats: set[int] = set()
+    for s in value:
+        if isinstance(s, bool) or not isinstance(s, int):
+            raise ValueError(f"human_seats 需為整數，收到 {type(s).__name__}")
+        seats.add(s)
+    if not seats:
+        raise ValueError("human_seats 至少需指定一個席位")
+    if any(s < 0 or s > 3 for s in seats):
+        raise ValueError(f"human_seats 僅接受 0–3，收到 {sorted(seats)}")
+    return seats
+
+
+# ---------------------------------------------------------------------------
 # 網頁模式：GameSession（generator-based 狀態機）
 # ---------------------------------------------------------------------------
 
@@ -1858,21 +1956,27 @@ class GameSession:
                                  未列入者一律由既有 AI 演算法操作。
 
         Raises:
-            ValueError: human_seats 為空集合，或含 0–3 以外的席位。
+            ValueError: 任一開局參數不合法（席位、莊家、連莊次數、門風、圈風）。
+
+        Note:
+            這裡的檢查是**第二道防線**。所有參數都可能由遠端客戶端帶入
+            （``net_mahjong.py`` 的 ``new_game`` 指令），連線層會先擋一次；
+            引擎層再擋一次，確保即使有人繞過連線層，也不會在牌局中途才
+            以 IndexError／TypeError 炸掉正在進行的牌局。
         """
-        self.contest = contest
-        self.dealer_idx_override = dealer_idx_override
-        self.consecutive = consecutive
-        self.seat_winds_override = seat_winds
-        self.game_round_wind_override = game_round_wind
+        self.contest = bool(contest)
+        self.dealer_idx_override = _validate_seat_or_none(
+            dealer_idx_override, "dealer_idx"
+        )
+        self.consecutive = _validate_consecutive(consecutive)
+        self.seat_winds_override = _validate_seat_winds(seat_winds)
+        self.game_round_wind_override = _validate_wind_or_none(
+            game_round_wind, "game_round_wind"
+        )
         if human_seats is None:
             seats = {HUMAN_PLAYER}
         else:
-            seats = {int(s) for s in human_seats}
-            if not seats:
-                raise ValueError("human_seats 至少需指定一個席位")
-            if any(s < 0 or s > 3 for s in seats):
-                raise ValueError(f"human_seats 僅接受 0–3，收到 {sorted(seats)}")
+            seats = _validate_human_seats(human_seats)
         self._human_seats: set[int] = seats
         self._absent_seats: set[int] = set()   # 暫時離線 → 由 AI 代打
         self._default_viewer: int = min(seats)
@@ -1919,6 +2023,17 @@ class GameSession:
             return -1
         actor = self._pending.get("actor")
         return -1 if actor is None else int(actor)
+
+    @property
+    def current_phase(self) -> str:
+        """目前決策點的 phase；尚未開局時回傳 ``""``。
+
+        Returns:
+            "human_discard" | "prompt" | "game_over" | ""
+        """
+        if self._pending is None:
+            return ""
+        return str(self._pending.get("phase", ""))
 
     def _is_human(self, seat: int) -> bool:
         """該席位此刻是否由真人操作（離線者視同 AI）。"""
@@ -2057,13 +2172,106 @@ class GameSession:
             response: 對應目前 phase 的回應字串
                 - phase=="human_discard" → 棄牌索引字串（"0"–"16"）
                 - phase=="prompt"        → "y" / "n" / "chi:N"（N 為吃法索引）
+
+        Raises:
+            RuntimeError: 尚未呼叫 start()。
+            ValueError:   回應不合法（索引非數字／超出範圍、chi 索引超出選項數）。
+                          此時 generator **不會**被推進也不會損毀，呼叫端可以
+                          回報錯誤後讓同一位玩家重送。
+
+        Note:
+            這裡的檢查是第二道防線；連線層（``net_mahjong.py``）會先擋一次，
+            以便把錯誤回報給該玩家而不影響其他三家。
         """
         if self._gen is None:
             raise RuntimeError("GameSession 尚未啟動，請先呼叫 start()")
+        self._validate_response(response)
         try:
             return self._gen.send(response)  # type: ignore[union-attr]
         except StopIteration as e:
             return e.value
+
+    # ------------------------------------------------------------------
+    # 回應驗證
+    # ------------------------------------------------------------------
+
+    def hand_size(self, seat: int) -> int:
+        """回傳該席目前的手牌張數（供連線層驗證出牌索引用）。
+
+        Args:
+            seat: 席位（0–3）
+
+        Returns:
+            手牌張數；尚未開局時回傳 0。
+        """
+        if self._m is None:
+            return 0
+        return len(self._m.players[seat].hand)
+
+    def chi_option_count(self) -> int:
+        """回傳目前吃牌提示的可選組合數；非吃牌提示時回傳 0。"""
+        if self._pending is None:
+            return 0
+        prompt: PromptInfo | None = self._pending.get("prompt")
+        if prompt is None or prompt.type != "chi" or not prompt.chi_options:
+            return 0
+        return len(prompt.chi_options)
+
+    def check_response(self, response: str) -> str | None:
+        """驗證回應是否對得上目前決策點，但不拋例外。
+
+        供連線層在把回應餵進 :meth:`respond` 之前先行檢查，以便把錯誤
+        回報給該玩家而不影響其他三家。
+
+        Args:
+            response: 待檢查的回應字串
+
+        Returns:
+            合法時回傳 None；不合法時回傳可直接顯示給玩家的錯誤訊息。
+        """
+        try:
+            self._validate_response(response)
+        except ValueError as exc:
+            return str(exc)
+        return None
+
+    def _validate_response(self, response: str) -> None:
+        """驗證回應字串是否對得上目前的決策點。
+
+        Raises:
+            ValueError: 回應不合法。
+        """
+        if not isinstance(response, str):
+            raise ValueError(f"回應需為字串，收到 {type(response).__name__}")
+        if self._pending is None:
+            return                      # 無待回應決策點，交給 generator 自行處理
+        phase = self._pending.get("phase")
+        actor = self._pending.get("actor")
+
+        if phase == "human_discard":
+            if not (response.isdigit() or
+                    (response.startswith("-") and response[1:].isdigit())):
+                raise ValueError(f"出牌索引需為整數字串，收到 {response!r}")
+            idx = int(response)
+            size = self.hand_size(actor) if actor is not None else 0
+            if not 0 <= idx < size:
+                raise ValueError(f"出牌索引需介於 0–{size - 1}，收到 {idx}")
+            return
+
+        if phase == "prompt":
+            count = self.chi_option_count()
+            if response in ("n", "pass"):
+                return                      # 跳過：任何提示都接受
+            if count > 0:
+                # 吃牌提示：只接受 chi:N（"y" 在 _game_loop 中會被 int() 炸掉）
+                if not response.startswith("chi:") or not response[4:].isdigit():
+                    raise ValueError(f"吃牌提示僅接受 n 或 chi:N，收到 {response!r}")
+                if not 0 <= int(response[4:]) < count:
+                    raise ValueError(f"吃牌索引需介於 0–{count - 1}，收到 {response[4:]}")
+                return
+            if response == "y":
+                return                      # 胡／碰／槓：接受
+            raise ValueError(f"此提示僅接受 y 或 n，收到 {response!r}")
 
     # ------------------------------------------------------------------
     # 內部輔助

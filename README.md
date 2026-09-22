@@ -152,14 +152,24 @@ uv run net_mahjong.py --seats 0 2 --ports 9000 9001
 uv run net_mahjong.py --players 4 --disconnect-grace 15 --afk-seconds 60
 ```
 
-啟動後終端機會列出每個席位的網址，把對應網址發給該位玩家即可：
+啟動後終端機會列出每個席位的網址，**每個網址都含該席專屬的存取 token**，
+請分別私下傳給該位玩家，不要對外張貼：
 
 ```
 麻將多人連線對戰｜真人 2 位，AI 2 位
-  席位 0 → http://0.0.0.0:8001/
-  席位 1 → http://0.0.0.0:8002/
+  每個席位的網址都含專屬 token，請分別傳給該位玩家，不要對外張貼：
+  席位 0 → http://127.0.0.1:8001/?t=siuX95j-7s3aCZLeqlxzhYwwjdbe_alb
+  席位 1 → http://127.0.0.1:8002/?t=8zgX3nO3iMCUKyzfqfU_Y4ta9xCN0SOA
   AI 席位：2, 3（沿用既有 AI 演算法）
 ```
+
+玩家第一次用帶 token 的網址進入後，token 會存成 `HttpOnly` + `SameSite=Strict`
+cookie，之後直接開 `http://主機:埠/` 就能回到原席位。沒有 token 的人即使連得到
+該連接埠，也會被 `/`（HTTP 401）與 `/ws`（HTTP 403）擋下。
+
+預設只監聽 `127.0.0.1`。要讓同網段的朋友連進來，需明確指定 `--host 0.0.0.0`
+（此時列出的網址會自動換成本機的區網 IP）。連線未加密，請僅在信任的網路使用，
+或搭配 SSH port forwarding／VPN。
 
 **命令列參數：**
 
@@ -169,7 +179,7 @@ uv run net_mahjong.py --players 4 --disconnect-grace 15 --afk-seconds 60
 | `--seats S...` | — | 明確指定真人席位（0–3），會覆蓋 `--players` |
 | `--ports P...` | — | 明確指定各席位連接埠，數量需等於玩家人數 |
 | `--base-port P` | `8001` | 未指定 `--ports` 時的起始連接埠，依序 +1 |
-| `--host H` | `0.0.0.0` | 監聽位址；只想本機連線可改 `127.0.0.1` |
+| `--host H` | `127.0.0.1` | 監聽位址；預設僅限本機，要讓同網段連入需改 `0.0.0.0` |
 | `--no-contest` | — | 關閉競賽模式（他家手牌與槓後補摸牌面不再隱藏） |
 | `--disconnect-grace S` | `15` | 輪到的玩家離線幾秒後由 AI 代打 |
 | `--afk-seconds S` | `0` | 玩家在線但未回應幾秒後由 AI 代打；`0` 為不限時 |
@@ -180,6 +190,9 @@ uv run net_mahjong.py --players 4 --disconnect-grace 15 --afk-seconds 60
 | 特性 | 說明 |
 |------|------|
 | 一席一埠 | 席位由連接埠決定，前端無法偽造席位；玩家也不必在畫面上挑座位 |
+| 席位 token | 連接埠只決定席位編號，token 才決定操作權；沒有 token 拿不到手牌 |
+| Origin 檢查 | WebSocket 握手比對 `Origin` 與 `Host`，阻擋跨站 WebSocket 劫持 |
+| 輸入驗證 | `discard` 索引、`new_game` 參數皆驗證型別與範圍；不合法只回錯給送出者，不會終止牌局 |
 | 視角旋轉 | 每位玩家的畫面都把自己畫在下方，順時針依序為下家／對家／上家 |
 | 競賽模式隔離 | 他家手牌一律背面；槓後補摸的牌面只推播給該席，不會外洩給其他玩家 |
 | 事件重播 | 每條連線各自帶事件游標，中途加入或斷線重連會補齊漏接的事件 |
@@ -190,8 +203,9 @@ uv run net_mahjong.py --players 4 --disconnect-grace 15 --afk-seconds 60
 **已知限制：**
 
 - 單一牌桌：一個行程只主持一副牌，要開多桌請啟動多個行程並使用不同連接埠
-- 無身分驗證：任何能連到該連接埠的人都能操作該席位，建議只在信任網路或搭配
-  SSH port forwarding／VPN 使用
+- 無傳輸加密：連線走 `ws://` 明文，同網段的被動監聽者可看到手牌。需要對外
+  開放時請搭配反向代理提供 `wss://`，或改用 SSH port forwarding／VPN
+- token 只存在記憶體：行程重啟後 token 會重新產生，需重新發送網址
 - 無斷線續盤：行程重啟後牌局不會保留
 
 ---

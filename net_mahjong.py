@@ -18,6 +18,19 @@
   ``decide_play``，碰吃必吃、槓依 ``AI_AUTO_KONG``、見胡必胡），
   不另外寫一套策略。
 
+存取控制
+--------
+* **席位 token**：啟動時為每個席位產生一組隨機 token，並印在該席的網址裡
+  （``http://127.0.0.1:8001/?t=<token>``）。連接埠只決定「席位編號」，
+  token 才決定「誰有權操作這個席位」——沒有 token 的人即使連得到該埠也
+  拿不到手牌。瀏覽器開過帶 token 的網址後，token 會以 ``HttpOnly`` +
+  ``SameSite=Strict`` cookie 保存，之後直接開 ``/`` 即可。
+* **Origin 檢查**：WebSocket 不受同源政策保護，因此握手時會比對 ``Origin``
+  與 ``Host``；不符即拒絕，阻擋跨站 WebSocket 劫持（CSWSH）。沒有 ``Origin``
+  標頭的非瀏覽器客戶端（如測試腳本）則靠 token 把關。
+* **預設只聽本機**：``--host`` 預設 ``127.0.0.1``。要讓同網段的朋友連進來
+  才需明確指定 ``--host 0.0.0.0``，此時務必把帶 token 的網址個別傳給本人。
+
 執行方式
 --------
 .. code-block:: bash
@@ -31,8 +44,21 @@
     # 四人連線，離線 15 秒後由 AI 代打，玩家發呆 60 秒也由 AI 代打
     uv run net_mahjong.py --players 4 --disconnect-grace 15 --afk-seconds 60
 
-WebSocket 協定（每個連接埠的 ``/ws``）
---------------------------------------
+HTTP 端點（每個連接埠）
+----------------------
+``GET /?t=<token>``      主頁；驗證後把 token 寫成該席專屬 cookie
+``GET /seat``            此埠綁定的席位與牌桌組成（需 token 或 cookie）
+``GET /static/...``      前端靜態檔
+未帶合法 token 的 ``/`` 與 ``/seat`` 一律回 ``401``。
+
+WebSocket 協定（每個連接埠的 ``/ws?t=<token>``）
+------------------------------------------------
+握手需通過 Origin 檢查與 token 驗證（token 可用查詢參數或 cookie 提供），
+未通過者在 ``accept()`` 之前即被拒絕（客戶端看到 HTTP 403）。
+
+所有 client → server 的欄位都經過型別與範圍驗證；不合法時只回
+``{"t": "error", ...}`` 給送出者，**不會影響其他三家、也不會終止牌局**。
+
 收（client → server）::
 
     {"cmd": "new_game", "contest": true, "dealer_idx": N, "consecutive": N,
@@ -56,23 +82,74 @@ import argparse
 import asyncio
 import contextlib
 import dataclasses
+import secrets
 import signal
 import sys
 from dataclasses import dataclass
 from pathlib import Path
+from urllib.parse import urlsplit
 
 import uvicorn
-from fastapi import FastAPI, WebSocket, WebSocketDisconnect
+from fastapi import FastAPI, Request, Response, WebSocket, WebSocketDisconnect
 from fastapi.responses import FileResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
 
-from mahjong import GameSession, GameState
+from mahjong import (
+    MAX_CONSECUTIVE,
+    GameSession,
+    GameState,
+    _SEAT_WIND_NAMES as WIND_NAMES,
+)
 
 STATIC_DIR = Path(__file__).parent / "static"
 
 DEFAULT_BASE_PORT = 8001
 SEAT_COUNT = 4
 _POLL_INTERVAL = 0.5          # 等待玩家回應時的輪詢間隔（秒）
+_TOKEN_BYTES = 24             # 席位 token 長度（secrets.token_urlsafe 的參數）
+
+# WebSocket 拒絕碼（4000–4999 為應用自訂範圍）。
+# 注意：在 accept() 之前關閉時，uvicorn 會把它轉成 HTTP 403 握手失敗回應，
+# 客戶端看到的是 403 而不是這裡的碼——這是刻意的：連線根本不會被建立，
+# 未通過驗證的對方拿不到任何牌局資訊。這兩個常數用於伺服器端區分原因。
+WS_CLOSE_UNAUTHORIZED = 4401  # token 缺漏或不符
+WS_CLOSE_BAD_ORIGIN = 4403    # Origin 與 Host 不符（疑似 CSWSH）
+
+
+def display_host(host: str) -> str:
+    """把監聽位址換成「可以貼給玩家點的」主機位址。
+
+    ``0.0.0.0``／``::`` 是「所有介面」的意思，不能直接當網址用。此時探測本機
+    對外的 IP（僅設定 UDP socket 的目的位址，不會真的送出封包），探測失敗就
+    退回 ``127.0.0.1``。
+
+    Args:
+        host: ``--host`` 指定的監聽位址
+
+    Returns:
+        可放進網址的主機位址。
+    """
+    if host not in ("0.0.0.0", "::"):
+        return host
+    import socket
+    try:
+        with socket.socket(socket.AF_INET, socket.SOCK_DGRAM) as s:
+            s.connect(("8.8.8.8", 80))     # 不送封包，只為取得出口介面位址
+            return s.getsockname()[0]
+    except OSError:
+        return "127.0.0.1"
+
+
+def seat_cookie_name(seat: int) -> str:
+    """回傳該席位的 token cookie 名稱。
+
+    Cookie 不以連接埠區分（同一主機的不同埠共用 cookie jar），因此把席位
+    編號放進名稱，避免席位之間互相覆蓋。
+
+    Args:
+        seat: 席位（0–3）
+    """
+    return f"mj_seat{seat}_token"
 
 
 def state_to_json(state: GameState) -> dict:
@@ -132,16 +209,82 @@ class TableOptions:
     game_round_wind: str | None = None
 
     @classmethod
-    def from_msg(cls, msg: dict, default_contest: bool) -> "TableOptions":
-        """由 ``new_game`` 指令建立開局參數。"""
+    def from_msg(
+        cls, msg: dict, default_contest: bool
+    ) -> tuple["TableOptions | None", str | None]:
+        """由 ``new_game`` 指令建立開局參數，並驗證每個欄位的邊界。
+
+        這些值全部來自不受信任的遠端客戶端。未經驗證直接送進
+        :class:`~mahjong.GameSession`，``dealer_idx``／``seat_winds`` 會在牌局
+        中途以 ``IndexError`` 炸掉整桌，``consecutive`` 則會讓 ``int()`` 拋
+        ``ValueError`` 而中斷該條 WebSocket。
+
+        Args:
+            msg:             ``new_game`` 指令的原始 dict
+            default_contest: 未指定 ``contest`` 時採用的預設值
+
+        Returns:
+            ``(opts, None)`` 表示驗證通過；``(None, 錯誤訊息)`` 表示參數不合法。
+        """
+        contest_raw = msg.get("contest", default_contest)
+        if not isinstance(contest_raw, bool):
+            return None, f"contest 需為布林值，收到 {type(contest_raw).__name__}"
+
+        dealer_idx = msg.get("dealer_idx")
+        if dealer_idx is not None:
+            if isinstance(dealer_idx, bool) or not isinstance(dealer_idx, int):
+                return None, f"dealer_idx 需為整數，收到 {type(dealer_idx).__name__}"
+            if not 0 <= dealer_idx < SEAT_COUNT:
+                return None, f"dealer_idx 僅接受 0–{SEAT_COUNT - 1}，收到 {dealer_idx}"
+
+        consecutive_raw = msg.get("consecutive", 0)
+        if consecutive_raw is None:
+            consecutive_raw = 0
+        if isinstance(consecutive_raw, bool) or not isinstance(consecutive_raw, int):
+            return None, f"consecutive 需為整數，收到 {type(consecutive_raw).__name__}"
+        if not 0 <= consecutive_raw <= MAX_CONSECUTIVE:
+            return None, (
+                f"consecutive 僅接受 0–{MAX_CONSECUTIVE}，收到 {consecutive_raw}"
+            )
+
         seat_winds_raw = msg.get("seat_winds")
+        seat_winds: list[str] | None = None
+        if seat_winds_raw:
+            if not isinstance(seat_winds_raw, list):
+                return None, (
+                    f"seat_winds 需為四個門風的列表，收到 {type(seat_winds_raw).__name__}"
+                )
+            if len(seat_winds_raw) != SEAT_COUNT:
+                return None, f"seat_winds 需恰好 {SEAT_COUNT} 項，收到 {len(seat_winds_raw)} 項"
+            for w in seat_winds_raw:
+                if not isinstance(w, str) or w not in WIND_NAMES:
+                    return None, (
+                        f"seat_winds 僅接受 {'／'.join(WIND_NAMES)}，收到 {w!r}"
+                    )
+            if len(set(seat_winds_raw)) != SEAT_COUNT:
+                return None, f"seat_winds 四家門風不可重複：{seat_winds_raw}"
+            seat_winds = list(seat_winds_raw)
+
+        game_round_wind = msg.get("game_round_wind") or None
+        if game_round_wind is not None:
+            if not isinstance(game_round_wind, str) or game_round_wind not in WIND_NAMES:
+                return None, (
+                    f"game_round_wind 僅接受 {'／'.join(WIND_NAMES)}，"
+                    f"收到 {game_round_wind!r}"
+                )
+
+        # consecutive > 0 時 GameSession 要求同時指定 dealer_idx，先擋下來，
+        # 否則會在 _game_loop 內以 RuntimeError 終止牌局。
+        if consecutive_raw > 0 and dealer_idx is None:
+            return None, "指定 consecutive 時需一併指定 dealer_idx"
+
         return cls(
-            contest=bool(msg.get("contest", default_contest)),
-            dealer_idx=msg.get("dealer_idx"),
-            consecutive=int(msg.get("consecutive", 0) or 0),
-            seat_winds=list(seat_winds_raw) if seat_winds_raw else None,
-            game_round_wind=msg.get("game_round_wind") or None,
-        )
+            contest=contest_raw,
+            dealer_idx=dealer_idx,
+            consecutive=consecutive_raw,
+            seat_winds=seat_winds,
+            game_round_wind=game_round_wind,
+        ), None
 
 
 # ---------------------------------------------------------------------------
@@ -169,6 +312,7 @@ class Table:
         disconnect_grace: float = 15.0,
         afk_seconds: float = 0.0,
         auto_start: bool = True,
+        seat_tokens: dict[int, str] | None = None,
     ) -> None:
         """初始化牌桌。
 
@@ -179,9 +323,14 @@ class Table:
             disconnect_grace: 輪到的玩家已離線多久（秒）後交給 AI 代打
             afk_seconds:      玩家在線但未回應多久（秒）後交給 AI 代打；0 為不限時
             auto_start:       所有真人席位都連上線時自動開局
+            seat_tokens:      席位 → 存取 token；None 時自動產生。
+                              連接埠只決定席位編號，token 才決定操作權。
         """
         self.seats = sorted(seats)
         self.seat_ports = seat_ports
+        self.seat_tokens = seat_tokens or {
+            s: secrets.token_urlsafe(_TOKEN_BYTES) for s in self.seats
+        }
         self.contest = contest
         self.disconnect_grace = disconnect_grace
         self.afk_seconds = afk_seconds
@@ -203,6 +352,34 @@ class Table:
     def connected_seats(self) -> list[int]:
         """目前有 WebSocket 連上的席位。"""
         return [s for s in self.seats if self._conns[s]]
+
+    def check_token(self, seat: int, token: str | None) -> bool:
+        """以定值時間比對席位 token。
+
+        Args:
+            seat:  席位（0–3）
+            token: 客戶端提供的 token；None 或空字串一律拒絕
+
+        Returns:
+            token 正確時為 True。
+        """
+        expected = self.seat_tokens.get(seat)
+        if not expected or not token:
+            return False
+        return secrets.compare_digest(token, expected)
+
+    def seat_url(self, host: str, seat: int) -> str:
+        """組出該席位的完整入場網址（含 token）。
+
+        Args:
+            host: ``--host`` 指定的監聽位址；``0.0.0.0``／``::`` 會換成本機
+                  對外的實際 IP，好讓網址可以直接傳給同網段的玩家
+            seat: 席位（0–3）
+        """
+        return (
+            f"http://{display_host(host)}:{self.seat_ports[seat]}/"
+            f"?t={self.seat_tokens[seat]}"
+        )
 
     def _lobby_payload(self) -> dict:
         """大廳狀態（誰連上了、牌局是否進行中）。"""
@@ -413,22 +590,83 @@ class Table:
         if not fut.done():
             fut.set_result(resp)
 
-    def submit(self, seat: int, resp: str) -> str | None:
-        """接受某席位的回應。
-
-        Args:
-            seat: 送出回應的席位（由連接埠決定，無法偽造）
-            resp: 回應字串
-
-        Returns:
-            成功時回傳 None，否則回傳給前端的錯誤訊息。
-        """
+    def _claim_turn(self, seat: int) -> tuple[Pending | None, str | None]:
+        """確認現在確實輪到這一席，回傳 (Pending, 錯誤訊息)。"""
         pending = self._pending
         if pending is None or pending.future.done():
-            return "目前沒有等待中的決策"
+            return None, "目前沒有等待中的決策"
         if pending.seat != seat:
-            return f"還沒輪到你（等待席位 {pending.seat}）"
+            return None, f"還沒輪到你（等待席位 {pending.seat}）"
+        if self._session is None:
+            return None, "牌局尚未開始"
+        return pending, None
+
+    def submit_discard(self, seat: int, raw_idx: object) -> str | None:
+        """驗證並接受某席位的出牌。
+
+        ``raw_idx`` 直接來自 WebSocket 的 JSON，型別與範圍都不可信任：
+
+        * 非整數（字串、浮點數、dict）會讓引擎的 ``int()`` 拋 ``ValueError``；
+        * 超出手牌張數會拋 ``IndexError``；
+        * **負數不會拋錯**，而是靜默打出手牌最後一張——玩家打出的不是他選的牌。
+
+        以上任一情況在修補前都會終止整桌牌局，因此一律在這裡擋下，
+        並保持等待狀態讓同一位玩家重送。
+
+        Args:
+            seat:    送出回應的席位
+            raw_idx: 客戶端提供的手牌索引（原始 JSON 值）
+
+        Returns:
+            成功時回傳 None，否則回傳給該玩家的錯誤訊息。
+        """
+        pending, err = self._claim_turn(seat)
+        if err is not None:
+            return err
+        assert pending is not None and self._session is not None
+
+        if self._session.current_phase != "human_discard":
+            return "目前不是出牌階段"
+        # 注意：bool 是 int 的子類別，True 會被當成索引 1，必須先排除。
+        if isinstance(raw_idx, bool) or not isinstance(raw_idx, int):
+            return f"出牌索引需為整數，收到 {type(raw_idx).__name__}"
+        size = self._session.hand_size(seat)
+        if not 0 <= raw_idx < size:
+            return f"出牌索引需介於 0–{size - 1}，收到 {raw_idx}"
+
+        resp = str(raw_idx)
+        msg = self._session.check_response(resp)   # 引擎層第二道防線
+        if msg is not None:
+            return msg
         pending.future.set_result(resp)
+        return None
+
+    def submit_action(self, seat: int, raw_action: object) -> str | None:
+        """驗證並接受某席位對提示（吃／碰／槓／胡）的回應。
+
+        Args:
+            seat:       送出回應的席位
+            raw_action: 客戶端提供的動作（原始 JSON 值），應為 "y"／"n"／"chi:N"
+
+        Returns:
+            成功時回傳 None，否則回傳給該玩家的錯誤訊息。
+        """
+        pending, err = self._claim_turn(seat)
+        if err is not None:
+            return err
+        assert pending is not None and self._session is not None
+
+        if self._session.current_phase != "prompt":
+            return "目前沒有待回應的提示"
+        if not isinstance(raw_action, str):
+            return f"action 需為字串，收到 {type(raw_action).__name__}"
+        if len(raw_action) > 16:
+            return "action 內容過長"
+
+        msg = self._session.check_response(raw_action)
+        if msg is not None:
+            return msg
+        pending.future.set_result(raw_action)
         return None
 
     async def shutdown(self) -> None:
@@ -443,6 +681,34 @@ class Table:
 # 每個席位一個 FastAPI app（綁定固定席位）
 # ---------------------------------------------------------------------------
 
+def origin_allowed(origin: str | None, host_header: str | None) -> bool:
+    """判斷 WebSocket 握手的 ``Origin`` 是否可信。
+
+    WebSocket **不受瀏覽器同源政策保護**：任何網頁都能開 ``ws://`` 連到本機
+    服務。若不比對 ``Origin``，玩家只要在對局期間瀏覽到惡意網頁，該網頁就能
+    連上這個席位、讀走手牌並代為出牌（跨站 WebSocket 劫持，CSWSH）。
+
+    比對對象取自請求自己的 ``Host`` 標頭，因此不論伺服器綁在 ``127.0.0.1``、
+    區網 IP 還是主機名稱都成立，不需要額外設定。
+
+    Args:
+        origin:      ``Origin`` 標頭；None 代表非瀏覽器客戶端
+        host_header: ``Host`` 標頭
+
+    Returns:
+        可放行時為 True。沒有 ``Origin`` 的客戶端（測試腳本、CLI 工具）放行，
+        因為它們本來就不受同源政策約束，改由席位 token 把關。
+    """
+    if origin is None:
+        return True
+    if not host_header:
+        return False
+    parsed = urlsplit(origin)
+    if parsed.scheme not in ("http", "https") or not parsed.netloc:
+        return False
+    return parsed.netloc == host_header
+
+
 def create_seat_app(table: Table, seat: int) -> FastAPI:
     """建立綁定於單一席位的 FastAPI app。
 
@@ -454,15 +720,46 @@ def create_seat_app(table: Table, seat: int) -> FastAPI:
         可交給 uvicorn 執行的 FastAPI app。
     """
     app = FastAPI(title=f"麻將連線對戰 — 席位 {seat}")
+    cookie_name = seat_cookie_name(seat)
+
+    def _token_from(request_token: str | None, cookie_token: str | None) -> str | None:
+        """取出要驗證的 token：網址參數優先，其次是先前存下的 cookie。"""
+        return request_token or cookie_token
 
     @app.get("/")
-    def index() -> FileResponse:
-        """回傳前端主頁。"""
-        return FileResponse(STATIC_DIR / "index.html")
+    def index(request: Request, t: str | None = None) -> Response:
+        """回傳前端主頁；首次進入需帶 ``?t=<token>``。
+
+        驗證通過後把 token 寫成 ``HttpOnly`` + ``SameSite=Strict`` 的 cookie，
+        之後直接開 ``/`` 即可，網址列也不會一直掛著 token。
+        """
+        token = _token_from(t, request.cookies.get(cookie_name))
+        if not table.check_token(seat, token):
+            return JSONResponse(
+                status_code=401,
+                content={
+                    "error": "unauthorized",
+                    "message": f"需要席位 {seat} 的存取 token，"
+                               f"請使用伺服器啟動時印出的網址（含 ?t=...）。",
+                },
+            )
+        resp = FileResponse(STATIC_DIR / "index.html")
+        resp.set_cookie(
+            cookie_name, token or "",
+            httponly=True,        # JavaScript 讀不到，降低 XSS 竊取風險
+            samesite="strict",    # 跨站請求不帶此 cookie（含 WS 握手）
+            max_age=12 * 3600,
+        )
+        return resp
 
     @app.get("/seat")
-    def seat_info() -> JSONResponse:
+    def seat_info(request: Request, t: str | None = None) -> JSONResponse:
         """回傳此連接埠綁定的席位與牌桌組成（供前端初始化）。"""
+        if not table.check_token(seat, _token_from(t, request.cookies.get(cookie_name))):
+            return JSONResponse(
+                status_code=401,
+                content={"error": "unauthorized", "message": "存取 token 不正確"},
+            )
         return JSONResponse({
             "seat": seat,
             "human_seats": table.seats,
@@ -472,23 +769,46 @@ def create_seat_app(table: Table, seat: int) -> FastAPI:
 
     @app.websocket("/ws")
     async def ws_game(ws: WebSocket) -> None:
-        """此席位的遊戲主通道。"""
+        """此席位的遊戲主通道。
+
+        握手時依序檢查 ``Origin``（擋 CSWSH）與席位 token（擋任意第三方），
+        兩者皆通過才 ``accept()``。
+        """
+        if not origin_allowed(ws.headers.get("origin"), ws.headers.get("host")):
+            await ws.close(code=WS_CLOSE_BAD_ORIGIN)
+            return
+        token = _token_from(
+            ws.query_params.get("t") or ws.query_params.get("token"),
+            ws.cookies.get(cookie_name),
+        )
+        if not table.check_token(seat, token):
+            await ws.close(code=WS_CLOSE_UNAUTHORIZED)
+            return
+
         await ws.accept()
         conn = Connection(ws=ws, seat=seat)
         await table.attach(conn)
         try:
             while True:
                 msg = await ws.receive_json()
+                if not isinstance(msg, dict):
+                    await ws.send_json({"t": "error", "v": "訊息需為 JSON 物件"})
+                    continue
                 cmd = msg.get("cmd")
 
                 if cmd == "new_game":
-                    await table.start_game(TableOptions.from_msg(msg, table.contest))
+                    opts, opts_err = TableOptions.from_msg(msg, table.contest)
+                    if opts_err is not None:
+                        await ws.send_json({"t": "error", "v": opts_err})
+                        continue
+                    assert opts is not None
+                    await table.start_game(opts)
                 elif cmd == "discard":
-                    err = table.submit(seat, str(msg.get("idx", 0)))
+                    err = table.submit_discard(seat, msg.get("idx"))
                     if err:
                         await ws.send_json({"t": "error", "v": err})
                 elif cmd == "action":
-                    err = table.submit(seat, str(msg.get("action", "n")))
+                    err = table.submit_action(seat, msg.get("action"))
                     if err:
                         await ws.send_json({"t": "error", "v": err})
                 elif cmd == "sync":
@@ -625,8 +945,9 @@ def build_parser() -> argparse.ArgumentParser:
                    help="明確指定各席位的連接埠（數量需等於玩家人數）")
     p.add_argument("--base-port", type=int, default=DEFAULT_BASE_PORT,
                    help=f"未指定 --ports 時的起始連接埠（預設 {DEFAULT_BASE_PORT}）")
-    p.add_argument("--host", default="0.0.0.0",
-                   help="監聽位址（預設 0.0.0.0，僅本機可改用 127.0.0.1）")
+    p.add_argument("--host", default="127.0.0.1",
+                   help="監聽位址（預設 127.0.0.1，僅限本機；要讓同網段的人連進來"
+                        "才改用 0.0.0.0，並個別把帶 token 的網址傳給本人）")
     p.add_argument("--no-contest", dest="contest", action="store_false",
                    help="關閉競賽模式（他家手牌與補摸牌面不再隱藏）")
     p.add_argument("--disconnect-grace", type=float, default=15.0,
@@ -654,16 +975,20 @@ def main(argv: list[str] | None = None) -> int:
     )
 
     ai_seats = [s for s in range(SEAT_COUNT) if s not in seats]
-    print("─" * 56)
+    print("─" * 72)
     print(f"麻將多人連線對戰｜真人 {len(seats)} 位，AI {len(ai_seats)} 位")
-    for seat, port in sorted(seat_ports.items()):
-        print(f"  席位 {seat} → http://{args.host}:{port}/")
+    print("  每個席位的網址都含專屬 token，請分別傳給該位玩家，不要對外張貼：")
+    for seat in seats:
+        print(f"  席位 {seat} → {table.seat_url(args.host, seat)}")
     if ai_seats:
         print(f"  AI 席位：{', '.join(str(s) for s in ai_seats)}（沿用既有 AI 演算法）")
     print(f"  競賽模式：{'開' if args.contest else '關'}"
           f"｜離線代打 {args.disconnect_grace:g}s"
           f"｜發呆代打 {'關' if args.afk_seconds <= 0 else f'{args.afk_seconds:g}s'}")
-    print("─" * 56)
+    if args.host not in ("127.0.0.1", "localhost", "::1"):
+        print(f"  ⚠ 監聽於 {args.host}：本機以外也連得到，請確認網路環境可信"
+              f"（連線未加密，建議僅用於信任的區網）")
+    print("─" * 72)
 
     try:
         asyncio.run(serve_all(table, args.host, seat_ports))
